@@ -1,5 +1,7 @@
 import streamlit as st
 import os
+import subprocess
+import requests
 from pypdf import PdfReader
 import chromadb
 
@@ -9,8 +11,39 @@ from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 MAX_FILE_SIZE_MB = 20
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 DB_DIR = "./local_db"
+EMBEDDING_MODEL = "nomic-embed-text"
 
 st.set_page_config(page_title="Smart Study Hub", page_icon="🧠", layout="wide")
+
+def check_and_pull_ollama_model():
+    """Verifică dacă Ollama rulează și dacă modelul este disponibil; îl descarcă dacă e necesar."""
+    try:
+        # Verificăm dacă serviciul Ollama răspunde la portul implicit
+        response = requests.get("http://localhost:11434/api/tags", timeout=3)
+        if response.status_code != 200:
+            st.error("Ollama rulează, dar a returnat o eroare. Verifică serviciul Ollama.")
+            st.stop()
+            
+        models_data = response.json().get("models", [])
+        installed_models = [m.get("name") for m in models_data]
+        
+        # Verificăm dacă avem varianta corectă a modelului instalată 
+        # (uneori apare ca "nomic-embed-text:latest")
+        if not any(EMBEDDING_MODEL in m for m in installed_models):
+            with st.spinner(f"Ollama este instalat. Se descarcă modelul {EMBEDDING_MODEL}... (Poate dura un minut)"):
+                pull_response = requests.post("http://localhost:11434/api/pull", json={"name": EMBEDDING_MODEL}, stream=False)
+                if pull_response.status_code == 200:
+                    st.success(f"Modelul {EMBEDDING_MODEL} a fost descărcat cu succes!")
+                else:
+                    st.error(f"Eroare la descărcarea modelului: {pull_response.text}")
+                    st.stop()
+                    
+    except requests.exceptions.ConnectionError:
+        st.error("❌ EROARE CRITICĂ: Ollama nu este pornit sau instalat. Te rugăm să instalezi Ollama de la [ollama.com](https://ollama.com/) și să pornești serviciul.")
+        st.stop()
+
+# Rulăm verificările înainte de încărcarea oricărui alt element 
+check_and_pull_ollama_model()
 
 # Inițializare Vector Database (ChromaDB)
 @st.cache_resource
@@ -20,7 +53,7 @@ def get_db():
     # Configurăm embedding-ul să se facă prin Ollama local cu nomic-embed-text
     ollama_ef = OllamaEmbeddingFunction(
         url="http://localhost:11434/api/embeddings",
-        model_name="nomic-embed-text",
+        model_name=EMBEDDING_MODEL,
     )
     
     collection = client.get_or_create_collection(
