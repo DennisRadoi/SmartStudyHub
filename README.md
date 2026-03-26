@@ -23,17 +23,67 @@ Smart Study Hub operates as a multi-agent system powered entirely by local proce
 
 ## 🚀 Getting Started
 
-*(Instructions on how to set up the Python environment, install Ollama, and run the application will be added here as development progresses).*
+The easiest way to run the project is by using the provided startup scripts. These scripts automatically start both the backend and frontend simultaneously.
+
+**For Linux/macOS:**
+```bash
+# Make the script executable (only needed the first time)
+chmod +x run.sh
+
+# Run the app
+./run.sh
+```
+*(Press `Ctrl+C` in the terminal to gracefully stop both servers).*
+
+**For Windows:**
+Simply double-click the `run.bat` file, or run it from your command prompt:
+```cmd
+run.bat
+```
+*(This will open two new terminal windows for the frontend and backend. To stop the application, just close those windows).*
+
+---
+
+### Manual Startup
+If you prefer to start them manually, you will need two separate terminals:
 
 ### Prerequisites
 
+- [Node.js](https://nodejs.org/) installed.
 - [Python 3.9+](https://www.python.org/)
 - [Ollama](https://ollama.ai/) installed and running locally.
 
+### 1. Start the FastAPI Backend
+Open a terminal and run the following commands:
+```bash
+# Activate your Python virtual environment (if you are using one)
+source venv/bin/activate
+
+# Install the backend dependencies
+pip install -r requirements.txt
+
+# Start the API server on localhost:8000
+python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 2. Start the React Frontend
+Open a second terminal and run:
+```bash
+# Navigate to the frontend directory
+cd frontend
+
+# Install necessary npm/NodeJS dependencies
+npm install
+
+# Start the Vite development frontend server
+npm run dev
+```
+
 ## 🛠️ Built With
-- **Python**
-- **Ollama** (Phi-3, Llama 3, Mistral)
-- **Local Vector DB**
+- **Frontend**: Node.js, React, Vite.
+- **Backend**: Python, FastAPI, PyPDF.
+- **Ollama** (Mistral, Quen 2.5, nomic-embed-text)
+- **Local Vector DB**: ChromaDB
 
 ---
 *Developed for a smarter, private, and more efficient studying experience.*
