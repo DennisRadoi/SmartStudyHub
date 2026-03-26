@@ -82,7 +82,7 @@ npm run dev
 ## 🛠️ Built With
 - **Frontend**: Node.js, React, Vite.
 - **Backend**: Python, FastAPI, PyPDF.
-- **Ollama** (Phi-3, Llama 3, Mistral)
+- **Ollama** (Mistral, Quen 2.5, nomic-embed-text)
 - **Local Vector DB**: ChromaDB
 
 ---
