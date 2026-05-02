@@ -8,10 +8,59 @@ function App() {
   const [selectedDoc, setSelectedDoc] = useState('');
   const [summarizing, setSummarizing] = useState(false);
   const [summary, setSummary] = useState('');
+  const [darkMode, setDarkMode] = useState(() => {
+    // Check localStorage for saved preference, default to false (light mode)
+    const saved = localStorage.getItem('smartStudyHub-darkMode');
+    return saved ? JSON.parse(saved) : false;
+  });
 
   useEffect(() => {
     fetchDocuments();
   }, []);
+
+  useEffect(() => {
+    // Save dark mode preference to localStorage
+    localStorage.setItem('smartStudyHub-darkMode', JSON.stringify(darkMode));
+    
+    // Apply theme to document and page background
+    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+    document.body.style.backgroundColor = darkMode ? theme.dark.background : theme.light.background;
+    document.body.style.color = darkMode ? theme.dark.text : theme.light.text;
+  }, [darkMode]);
+
+  const toggleDarkMode = () => {
+    setDarkMode(!darkMode);
+  };
+
+  // Theme styles
+  const theme = {
+    light: {
+      background: '#ffffff',
+      surface: '#f8f9fa',
+      cardBg: 'white',
+      text: '#24292f',
+      textSecondary: '#656d76',
+      border: '#d1d9e0',
+      primary: '#0969da',
+      success: '#1f883d',
+      error: '#d1242f',
+      buttonDisabled: '#8c959f'
+    },
+    dark: {
+      background: '#0d1117',
+      surface: '#161b22',
+      cardBg: '#21262d',
+      text: '#f0f6fc',
+      textSecondary: '#c9d1d9',
+      border: '#30363d',
+      primary: '#79c0ff',
+      success: '#56d364',
+      error: '#f85149',
+      buttonDisabled: '#8c959f'
+    }
+  };
+
+  const currentTheme = darkMode ? theme.dark : theme.light;
 
   const fetchDocuments = async () => {
     try {
@@ -101,26 +150,50 @@ function App() {
       padding: '20px',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"',
       lineHeight: '1.5',
-      color: '#24292f',
-      backgroundColor: '#ffffff'
+      color: currentTheme.text,
+      backgroundColor: currentTheme.background,
+      minHeight: '100vh'
     }}>
       <header style={{
         textAlign: 'center',
         marginBottom: '40px',
         padding: '20px',
-        borderBottom: '1px solid #d1d9e0'
+        borderBottom: `1px solid ${currentTheme.border}`,
+        position: 'relative'
       }}>
+        <button
+          onClick={toggleDarkMode}
+          style={{
+            position: 'absolute',
+            top: '20px',
+            right: '20px',
+            padding: '8px 12px',
+            backgroundColor: currentTheme.surface,
+            color: currentTheme.text,
+            border: `1px solid ${currentTheme.border}`,
+            borderRadius: '6px',
+            fontSize: '0.9rem',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            transition: 'all 0.2s'
+          }}
+          title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+        >
+          {darkMode ? '☀️ Light' : '🌙 Dark'}
+        </button>
         <h1 style={{
           fontSize: '2.5rem',
           fontWeight: '600',
           margin: '0 0 10px 0',
-          color: '#24292f'
+          color: currentTheme.text
         }}>
           🧠 Smart Study Hub
         </h1>
         <p style={{
           fontSize: '1.1rem',
-          color: '#656d76',
+          color: currentTheme.textSecondary,
           margin: '0'
         }}>
           Intelligent AI-powered study assistant for seamless document interaction
@@ -135,15 +208,15 @@ function App() {
       }}>
         <div style={{
           padding: '24px',
-          border: '1px solid #d1d9e0',
+          border: `1px solid ${currentTheme.border}`,
           borderRadius: '12px',
-          backgroundColor: '#f8f9fa'
+          backgroundColor: currentTheme.surface
         }}>
           <h2 style={{
             fontSize: '1.5rem',
             fontWeight: '600',
             margin: '0 0 16px 0',
-            color: '#24292f',
+            color: currentTheme.text,
             display: 'flex',
             alignItems: 'center',
             gap: '8px'
@@ -151,7 +224,7 @@ function App() {
             📄 Upload Document
           </h2>
           <p style={{
-            color: '#656d76',
+            color: currentTheme.textSecondary,
             margin: '0 0 20px 0',
             fontSize: '0.9rem'
           }}>
@@ -164,9 +237,10 @@ function App() {
               onChange={handleFileChange}
               style={{
                 padding: '8px 12px',
-                border: '1px solid #d1d9e0',
+                border: `1px solid ${currentTheme.border}`,
                 borderRadius: '6px',
-                backgroundColor: 'white',
+                backgroundColor: currentTheme.cardBg,
+                color: currentTheme.text,
                 fontSize: '0.9rem'
               }}
             />
@@ -175,7 +249,7 @@ function App() {
               disabled={!file || uploading}
               style={{
                 padding: '8px 16px',
-                backgroundColor: !file || uploading ? '#8c959f' : '#1f883d',
+                backgroundColor: !file || uploading ? currentTheme.buttonDisabled : currentTheme.success,
                 color: 'white',
                 border: 'none',
                 borderRadius: '6px',
@@ -204,15 +278,15 @@ function App() {
 
         <div style={{
           padding: '24px',
-          border: '1px solid #d1d9e0',
+          border: `1px solid ${currentTheme.border}`,
           borderRadius: '12px',
-          backgroundColor: '#f8f9fa'
+          backgroundColor: currentTheme.surface
         }}>
           <h2 style={{
             fontSize: '1.5rem',
             fontWeight: '600',
             margin: '0 0 16px 0',
-            color: '#24292f',
+            color: currentTheme.text,
             display: 'flex',
             alignItems: 'center',
             gap: '8px'
@@ -221,7 +295,7 @@ function App() {
           </h2>
           {documents.length === 0 ? (
             <p style={{
-              color: '#656d76',
+              color: currentTheme.textSecondary,
               margin: '0',
               fontStyle: 'italic'
             }}>
@@ -237,11 +311,11 @@ function App() {
                 <li key={index} style={{
                   padding: '8px 12px',
                   marginBottom: '4px',
-                  backgroundColor: 'white',
-                  border: '1px solid #d1d9e0',
+                  backgroundColor: currentTheme.cardBg,
+                  border: `1px solid ${currentTheme.border}`,
                   borderRadius: '6px',
                   fontSize: '0.9rem',
-                  color: '#24292f'
+                  color: currentTheme.text
                 }}>
                   📄 {doc.filename}
                 </li>
@@ -253,15 +327,15 @@ function App() {
 
       <div style={{
         padding: '24px',
-        border: '1px solid #d1d9e0',
+        border: `1px solid ${currentTheme.border}`,
         borderRadius: '12px',
-        backgroundColor: '#f8f9fa'
+        backgroundColor: currentTheme.surface
       }}>
         <h2 style={{
           fontSize: '1.5rem',
           fontWeight: '600',
           margin: '0 0 16px 0',
-          color: '#24292f',
+          color: currentTheme.text,
           display: 'flex',
           alignItems: 'center',
           gap: '8px'
@@ -269,7 +343,7 @@ function App() {
           📑 Smart Summarization
         </h2>
         <p style={{
-          color: '#656d76',
+          color: currentTheme.textSecondary,
           margin: '0 0 20px 0',
           fontSize: '0.9rem'
         }}>
@@ -281,9 +355,10 @@ function App() {
             onChange={(e) => setSelectedDoc(e.target.value)}
             style={{
               padding: '8px 12px',
-              border: '1px solid #d1d9e0',
+              border: `1px solid ${currentTheme.border}`,
               borderRadius: '6px',
-              backgroundColor: 'white',
+              backgroundColor: currentTheme.cardBg,
+              color: currentTheme.text,
               fontSize: '0.9rem',
               minWidth: '200px'
             }}
@@ -298,7 +373,7 @@ function App() {
             disabled={!selectedDoc || summarizing}
             style={{
               padding: '8px 16px',
-              backgroundColor: !selectedDoc || summarizing ? '#8c959f' : '#0969da',
+              backgroundColor: !selectedDoc || summarizing ? currentTheme.buttonDisabled : currentTheme.primary,
               color: 'white',
               border: 'none',
               borderRadius: '6px',
@@ -314,8 +389,8 @@ function App() {
 
         {summary && (
           <div style={{
-            backgroundColor: 'white',
-            border: '1px solid #d1d9e0',
+            backgroundColor: currentTheme.cardBg,
+            border: `1px solid ${currentTheme.border}`,
             borderRadius: '12px',
             padding: '24px',
             marginTop: '20px'
@@ -324,8 +399,8 @@ function App() {
               fontSize: '1.25rem',
               fontWeight: '600',
               margin: '0 0 20px 0',
-              color: '#24292f',
-              borderBottom: '1px solid #d1d9e0',
+              color: currentTheme.text,
+              borderBottom: `1px solid ${currentTheme.border}`,
               paddingBottom: '12px'
             }}>
               📖 Summary: {selectedDoc}
@@ -333,7 +408,7 @@ function App() {
             <div style={{
               lineHeight: '1.7',
               fontSize: '1rem',
-              color: '#24292f'
+              color: currentTheme.text
             }}>
               {summary.split('\n').map((paragraph, index) => {
                 if (paragraph.trim() === '') return null;
@@ -354,7 +429,7 @@ function App() {
                       marginBottom: '16px',
                       fontWeight: paragraph.startsWith('#') || paragraph.length < 100 ? '600' : 'normal',
                       fontSize: paragraph.startsWith('#') || paragraph.length < 100 ? '1.1rem' : '1rem',
-                      color: paragraph.startsWith('#') || paragraph.length < 100 ? '#0969da' : '#24292f'
+                      color: paragraph.startsWith('#') || paragraph.length < 100 ? currentTheme.primary : currentTheme.text
                     }}>
                       {paragraph.startsWith('#') ? paragraph.substring(1).trim() : paragraph}
                     </div>
