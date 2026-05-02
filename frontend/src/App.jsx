@@ -1,379 +1,531 @@
 import { useState, useEffect } from 'react'
 
+const API_BASE = 'http://localhost:8000/api'
+
+const theme = {
+  light: {
+    background: '#ffffff',
+    surface: '#f8f9fa',
+    cardBg: '#ffffff',
+    text: '#24292f',
+    textSecondary: '#57606a',
+    border: '#d1d9e0',
+    primary: '#0969da',
+    success: '#1f7a33',
+    error: '#b12a2f',
+    buttonDisabled: '#8c959f'
+  },
+  dark: {
+    background: '#01070d',
+    surface: '#0d1117',
+    cardBg: '#161b22',
+    text: '#c9d1d9',
+    textSecondary: '#8b949e',
+    border: '#30363d',
+    primary: '#58a6ff',
+    success: '#56d364',
+    error: '#f85149',
+    buttonDisabled: '#484f58'
+  }
+}
+
 function App() {
-  const [file, setFile] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [message, setMessage] = useState('');
-  const [documents, setDocuments] = useState([]);
-  const [selectedDoc, setSelectedDoc] = useState('');
-  const [summarizing, setSummarizing] = useState(false);
-  const [summary, setSummary] = useState('');
+  const [file, setFile] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [message, setMessage] = useState('')
+  const [documents, setDocuments] = useState([])
+  const [selectedDoc, setSelectedDoc] = useState('')
+  const [summarizing, setSummarizing] = useState(false)
+  const [summary, setSummary] = useState('')
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('smartStudyHub-darkMode')
+    return saved ? JSON.parse(saved) : false
+  })
+
+  const currentTheme = darkMode ? theme.dark : theme.light
 
   useEffect(() => {
-    fetchDocuments();
-  }, []);
+    fetchDocuments()
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem('smartStudyHub-darkMode', JSON.stringify(darkMode))
+    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light')
+    document.body.style.backgroundColor = currentTheme.background
+    document.body.style.color = currentTheme.text
+  }, [darkMode, currentTheme.background, currentTheme.text])
+
+  const toggleDarkMode = () => {
+    setDarkMode((prev) => !prev)
+  }
 
   const fetchDocuments = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/documents');
+      const response = await fetch(`${API_BASE}/documents`)
       if (response.ok) {
-        const data = await response.json();
-        setDocuments(data.documents);
+        const data = await response.json()
+        setDocuments(data.documents)
       }
     } catch (error) {
-      console.error('Failed to fetch documents', error);
+      console.error('Fetch error', error)
+      setMessage('Unable to load documents. Please check backend connectivity.')
     }
-  };
+  }
 
-  const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
-    if (selectedFile && !selectedFile.name.endsWith('.pdf')) {
-      setMessage('Error: Only PDF files are allowed');
-      setFile(null);
-      return;
+  const handleFileChange = (event) => {
+    const selectedFile = event.target.files?.[0] || null
+    if (!selectedFile) {
+      setFile(null)
+      return
     }
-    if (selectedFile && selectedFile.size > 20 * 1024 * 1024) {
-      setMessage('Error: File exceeds 20MB limit');
-      setFile(null);
-      return;
+
+    if (!selectedFile.name.toLowerCase().endsWith('.pdf')) {
+      setMessage('Only PDF files are allowed.')
+      setFile(null)
+      return
     }
-    setFile(selectedFile);
-    setMessage('');
-  };
+
+    if (selectedFile.size > 20 * 1024 * 1024) {
+      setMessage('File exceeds the 20MB limit.')
+      setFile(null)
+      return
+    }
+
+    setFile(selectedFile)
+    setMessage('')
+  }
 
   const handleUpload = async () => {
-    if (!file) return;
-    setUploading(true);
-    setMessage('');
+    if (!file) return
+    setUploading(true)
+    setMessage('')
 
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const response = await fetch('http://localhost:8000/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await response.json();
-
-      if (response.ok) {
-        setMessage(data.message || 'Success!');
-        setFile(null);
-        fetchDocuments();
-      } else {
-        setMessage('Error: ' + data.detail);
-      }
-    } catch (error) {
-      setMessage('Error uploading file: ' + error.message);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const handleSummarize = async () => {
-    if (!selectedDoc) return;
-    setSummarizing(true);
-    setSummary('');
-    setMessage('');
+    const formData = new FormData()
+    formData.append('file', file)
 
     try {
-      const response = await fetch(`http://localhost:8000/api/summarize/${encodeURIComponent(selectedDoc)}`, {
+      const response = await fetch(`${API_BASE}/upload`, {
         method: 'POST',
-      });
-      const data = await response.json();
+        body: formData
+      })
+      const data = await response.json()
 
       if (response.ok) {
-        setSummary(data.summary);
+        setMessage(data.message || 'Document uploaded successfully.')
+        setFile(null)
+        await fetchDocuments()
       } else {
-        setMessage('Error: ' + data.detail);
+        setMessage(data.detail || 'Upload failed. Please try again.')
       }
     } catch (error) {
-      setMessage('Error generating summary: ' + error.message);
+      setMessage('Upload error: ' + error.message)
     } finally {
-      setSummarizing(false);
+      setUploading(false)
     }
-  };
+  }
+
+  const summarizeDocument = async (filename) => {
+    if (!filename) {
+      setMessage('Please select a document to summarize.')
+      return
+    }
+
+    setSelectedDoc(filename)
+    setSummary('')
+    setSummarizing(true)
+    setMessage('')
+
+    try {
+      const response = await fetch(`${API_BASE}/summarize/${encodeURIComponent(filename)}`, {
+        method: 'POST'
+      })
+      const data = await response.json()
+
+      if (response.ok) {
+        setSummary(data.summary)
+      } else {
+        setMessage(data.detail || 'Summary generation failed.')
+      }
+    } catch (error) {
+      setMessage('Error generating summary: ' + error.message)
+    } finally {
+      setSummarizing(false)
+    }
+  }
+
+  const handleCopySummary = async () => {
+    if (!summary) return
+    try {
+      await navigator.clipboard.writeText(summary)
+      setMessage('Summary copied to clipboard.')
+    } catch (error) {
+      setMessage('Unable to copy summary.')
+    }
+  }
+
+  const handleDownloadSummary = () => {
+    if (!summary) return
+    const blob = new Blob([summary], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${selectedDoc || 'summary'}.txt`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div style={{
-      maxWidth: '1200px',
+      minHeight: '100vh',
+      padding: '24px',
+      maxWidth: '1240px',
       margin: '0 auto',
-      padding: '20px',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji"',
-      lineHeight: '1.5',
-      color: '#24292f',
-      backgroundColor: '#ffffff'
+      color: currentTheme.text,
+      backgroundColor: currentTheme.background,
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
     }}>
       <header style={{
-        textAlign: 'center',
-        marginBottom: '40px',
-        padding: '20px',
-        borderBottom: '1px solid #d1d9e0'
+        marginBottom: '34px',
+        padding: '28px 24px',
+        borderRadius: '24px',
+        background: darkMode ? '#03121d' : '#f6f8fa',
+        border: `1px solid ${currentTheme.border}`,
+        display: 'flex',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        gap: '16px',
+        alignItems: 'center'
       }}>
-        <h1 style={{
-          fontSize: '2.5rem',
-          fontWeight: '600',
-          margin: '0 0 10px 0',
-          color: '#24292f'
-        }}>
-          🧠 Smart Study Hub
-        </h1>
-        <p style={{
-          fontSize: '1.1rem',
-          color: '#656d76',
-          margin: '0'
-        }}>
-          Intelligent AI-powered study assistant for seamless document interaction
-        </p>
+        <div>
+          <p style={{
+            margin: 0,
+            color: currentTheme.primary,
+            fontSize: '0.95rem',
+            fontWeight: '700'
+          }}>
+            GitHub-style Study Hub
+          </p>
+          <h1 style={{
+            margin: '12px 0 8px 0',
+            fontSize: '2.6rem',
+            lineHeight: '1.05',
+            color: currentTheme.text
+          }}>
+            Studiază mai inteligent, nu mai greu
+          </h1>
+          <p style={{
+            margin: 0,
+            color: currentTheme.textSecondary,
+            fontSize: '1rem',
+            maxWidth: '680px'
+          }}>
+            Încarcă PDF-uri, generează rezumate structurate și exportă notițele direct din browser. Interfața este optimizată pentru citire clară și productivitate.
+          </p>
+        </div>
+
+        <button
+          onClick={toggleDarkMode}
+          style={{
+            padding: '12px 18px',
+            borderRadius: '12px',
+            border: `1px solid ${currentTheme.border}`,
+            backgroundColor: currentTheme.surface,
+            color: currentTheme.text,
+            cursor: 'pointer',
+            fontWeight: '700'
+          }}
+        >
+          {darkMode ? '🌙 Dark Mode' : '☀️ Light Mode'}
+        </button>
       </header>
 
-      <div style={{
+      <section style={{
         display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: '30px',
-        marginBottom: '30px'
+        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        gap: '24px',
+        marginBottom: '28px'
       }}>
-        <div style={{
-          padding: '24px',
-          border: '1px solid #d1d9e0',
-          borderRadius: '12px',
-          backgroundColor: '#f8f9fa'
+        <article style={{
+          borderRadius: '24px',
+          padding: '28px',
+          backgroundColor: currentTheme.surface,
+          border: `1px solid ${currentTheme.border}`,
+          boxShadow: darkMode ? '0 20px 60px rgba(0,0,0,0.18)' : '0 20px 60px rgba(15, 23, 42, 0.08)'
         }}>
-          <h2 style={{
-            fontSize: '1.5rem',
-            fontWeight: '600',
-            margin: '0 0 16px 0',
-            color: '#24292f',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
-            📄 Upload Document
+          <h2 style={{ margin: '0 0 16px', color: currentTheme.text, fontSize: '1.5rem' }}>
+            Încarcă document
           </h2>
-          <p style={{
-            color: '#656d76',
-            margin: '0 0 20px 0',
-            fontSize: '0.9rem'
-          }}>
-            Upload your course materials (PDF files up to 20MB)
+          <p style={{ margin: '0 0 24px', color: currentTheme.textSecondary }}>
+            PDF-uri de maxim 20MB. Vom extrage textul și le vom stoca pentru a genera rezumate rapide.
           </p>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <input
-              type="file"
-              accept=".pdf"
-              onChange={handleFileChange}
-              style={{
-                padding: '8px 12px',
-                border: '1px solid #d1d9e0',
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.9rem'
-              }}
-            />
+
+          <div style={{ display: 'grid', gap: '16px' }}>
+            <label style={{ display: 'block', width: '100%' }}>
+              <input
+                type='file'
+                accept='.pdf'
+                onChange={handleFileChange}
+                style={{
+                  width: '100%',
+                  padding: '14px 16px',
+                  borderRadius: '16px',
+                  border: `1px solid ${currentTheme.border}`,
+                  backgroundColor: currentTheme.cardBg,
+                  color: currentTheme.text,
+                  fontSize: '0.95rem'
+                }}
+              />
+            </label>
             <button
               onClick={handleUpload}
               disabled={!file || uploading}
               style={{
-                padding: '8px 16px',
-                backgroundColor: !file || uploading ? '#8c959f' : '#1f883d',
-                color: 'white',
+                width: 'fit-content',
+                padding: '14px 18px',
+                borderRadius: '16px',
                 border: 'none',
-                borderRadius: '6px',
-                fontSize: '0.9rem',
-                fontWeight: '500',
+                backgroundColor: !file || uploading ? currentTheme.buttonDisabled : currentTheme.success,
+                color: '#ffffff',
                 cursor: !file || uploading ? 'not-allowed' : 'pointer',
-                transition: 'background-color 0.2s'
+                fontWeight: '700'
               }}
             >
-              {uploading ? 'Uploading...' : 'Upload'}
+              {uploading ? 'Încarcare...' : 'Încarcă PDF'}
             </button>
           </div>
+
           {message && (
             <div style={{
-              marginTop: '16px',
-              padding: '12px',
-              borderRadius: '6px',
-              backgroundColor: message.startsWith('Error') ? '#ffebe9' : '#f0f9e7',
-              border: `1px solid ${message.startsWith('Error') ? '#d1242f' : '#238636'}`,
-              color: message.startsWith('Error') ? '#d1242f' : '#1f883d'
+              marginTop: '24px',
+              padding: '16px',
+              borderRadius: '16px',
+              backgroundColor: currentTheme.primary,
+              color: '#ffffff'
             }}>
               {message}
             </div>
           )}
-        </div>
+        </article>
 
-        <div style={{
-          padding: '24px',
-          border: '1px solid #d1d9e0',
-          borderRadius: '12px',
-          backgroundColor: '#f8f9fa'
+        <article style={{
+          borderRadius: '24px',
+          padding: '28px',
+          backgroundColor: currentTheme.surface,
+          border: `1px solid ${currentTheme.border}`,
+          boxShadow: darkMode ? '0 20px 60px rgba(0,0,0,0.18)' : '0 20px 60px rgba(15, 23, 42, 0.08)'
         }}>
-          <h2 style={{
-            fontSize: '1.5rem',
-            fontWeight: '600',
-            margin: '0 0 16px 0',
-            color: '#24292f',
+          <div style={{
             display: 'flex',
+            justifyContent: 'space-between',
             alignItems: 'center',
-            gap: '8px'
+            gap: '12px',
+            flexWrap: 'wrap'
           }}>
-            📚 Saved Documents
-          </h2>
+            <div>
+              <h2 style={{ margin: '0 0 8px', color: currentTheme.text, fontSize: '1.5rem' }}>
+                Documente încărcate
+              </h2>
+              <p style={{ margin: 0, color: currentTheme.textSecondary }}>
+                Selectează un fișier sau folosește butonul direct din listă.
+              </p>
+            </div>
+            <span style={{ color: currentTheme.textSecondary, fontWeight: '700' }}>
+              {documents.length} fișier{documents.length === 1 ? '' : 'e'}
+            </span>
+          </div>
+
           {documents.length === 0 ? (
-            <p style={{
-              color: '#656d76',
-              margin: '0',
-              fontStyle: 'italic'
-            }}>
-              No documents uploaded yet
+            <p style={{ marginTop: '22px', color: currentTheme.textSecondary }}>
+              Nu ai încă documente. Încarcă primul PDF pentru a începe.
             </p>
           ) : (
-            <ul style={{
-              listStyle: 'none',
-              padding: '0',
-              margin: '0'
-            }}>
-              {documents.map((doc, index) => (
-                <li key={index} style={{
-                  padding: '8px 12px',
-                  marginBottom: '4px',
-                  backgroundColor: 'white',
-                  border: '1px solid #d1d9e0',
-                  borderRadius: '6px',
-                  fontSize: '0.9rem',
-                  color: '#24292f'
-                }}>
-                  📄 {doc.filename}
-                </li>
-              ))}
+            <ul style={{ listStyle: 'none', padding: 0, margin: '22px 0 0', display: 'grid', gap: '16px' }}>
+              {documents.map((doc, index) => {
+                const active = doc.filename === selectedDoc
+                return (
+                  <li key={index} style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr auto',
+                    gap: '16px',
+                    alignItems: 'center',
+                    padding: '18px',
+                    borderRadius: '18px',
+                    backgroundColor: active ? (darkMode ? '#112d4a' : '#e7f5ff') : currentTheme.cardBg,
+                    border: `1px solid ${active ? currentTheme.primary : currentTheme.border}`
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '1rem', fontWeight: '700', color: currentTheme.text }}>
+                        {doc.filename}
+                      </div>
+                      <div style={{ marginTop: '6px', color: currentTheme.textSecondary, fontSize: '0.92rem' }}>
+                        Rezumat structurat pe cerere.
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => summarizeDocument(doc.filename)}
+                      style={{
+                        padding: '12px 16px',
+                        borderRadius: '14px',
+                        border: 'none',
+                        backgroundColor: currentTheme.primary,
+                        color: '#ffffff',
+                        cursor: 'pointer',
+                        fontWeight: '700'
+                      }}
+                    >
+                      Summarize
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
           )}
-        </div>
-      </div>
+        </article>
+      </section>
 
-      <div style={{
-        padding: '24px',
-        border: '1px solid #d1d9e0',
-        borderRadius: '12px',
-        backgroundColor: '#f8f9fa'
+      <section style={{
+        borderRadius: '24px',
+        padding: '28px',
+        backgroundColor: currentTheme.surface,
+        border: `1px solid ${currentTheme.border}`,
+        boxShadow: darkMode ? '0 20px 60px rgba(0,0,0,0.14)' : '0 20px 60px rgba(15, 23, 42, 0.07)'
       }}>
-        <h2 style={{
-          fontSize: '1.5rem',
-          fontWeight: '600',
-          margin: '0 0 16px 0',
-          color: '#24292f',
+        <div style={{
           display: 'flex',
+          justifyContent: 'space-between',
           alignItems: 'center',
-          gap: '8px'
+          flexWrap: 'wrap',
+          gap: '16px',
+          marginBottom: '22px'
         }}>
-          📑 Smart Summarization
-        </h2>
-        <p style={{
-          color: '#656d76',
-          margin: '0 0 20px 0',
-          fontSize: '0.9rem'
-        }}>
-          Generate structured, easy-to-read summaries of your chapters to save time during revision
-        </p>
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '20px' }}>
-          <select
-            value={selectedDoc}
-            onChange={(e) => setSelectedDoc(e.target.value)}
-            style={{
-              padding: '8px 12px',
-              border: '1px solid #d1d9e0',
-              borderRadius: '6px',
-              backgroundColor: 'white',
-              fontSize: '0.9rem',
-              minWidth: '200px'
-            }}
-          >
-            <option value="">Select a document</option>
-            {documents.map((doc, index) => (
-              <option key={index} value={doc.filename}>{doc.filename}</option>
-            ))}
-          </select>
-          <button
-            onClick={handleSummarize}
-            disabled={!selectedDoc || summarizing}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: !selectedDoc || summarizing ? '#8c959f' : '#0969da',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              fontSize: '0.9rem',
-              fontWeight: '500',
-              cursor: !selectedDoc || summarizing ? 'not-allowed' : 'pointer',
-              transition: 'background-color 0.2s'
-            }}
-          >
-            {summarizing ? 'Generating Summary...' : 'Summarize'}
-          </button>
+          <div>
+            <h2 style={{ margin: '0 0 8px', color: currentTheme.text, fontSize: '1.6rem' }}>
+              Rezumat structurat
+            </h2>
+            <p style={{ margin: 0, color: currentTheme.textSecondary }}>
+              Alege documentul și generează un rezumat tip articol web, gata pentru notițele tale.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <select
+              value={selectedDoc}
+              onChange={(event) => setSelectedDoc(event.target.value)}
+              style={{
+                minWidth: '220px',
+                padding: '12px 14px',
+                borderRadius: '14px',
+                border: `1px solid ${currentTheme.border}`,
+                backgroundColor: currentTheme.cardBg,
+                color: currentTheme.text,
+                fontSize: '0.95rem'
+              }}
+            >
+              <option value=''>Alege un document</option>
+              {documents.map((doc, index) => (
+                <option key={index} value={doc.filename}>{doc.filename}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => summarizeDocument(selectedDoc)}
+              disabled={!selectedDoc || summarizing}
+              style={{
+                padding: '12px 18px',
+                borderRadius: '14px',
+                border: 'none',
+                backgroundColor: !selectedDoc || summarizing ? currentTheme.buttonDisabled : currentTheme.primary,
+                color: '#ffffff',
+                cursor: !selectedDoc || summarizing ? 'not-allowed' : 'pointer',
+                fontWeight: '700'
+              }}
+            >
+              {summarizing ? 'Generare…' : 'Generează rezumat'}
+            </button>
+          </div>
         </div>
 
-        {summary && (
+        {summary ? (
           <div style={{
-            backgroundColor: 'white',
-            border: '1px solid #d1d9e0',
-            borderRadius: '12px',
-            padding: '24px',
-            marginTop: '20px'
+            backgroundColor: currentTheme.cardBg,
+            border: `1px solid ${currentTheme.border}`,
+            borderRadius: '22px',
+            padding: '24px'
           }}>
-            <h3 style={{
-              fontSize: '1.25rem',
-              fontWeight: '600',
-              margin: '0 0 20px 0',
-              color: '#24292f',
-              borderBottom: '1px solid #d1d9e0',
-              paddingBottom: '12px'
-            }}>
-              📖 Summary: {selectedDoc}
-            </h3>
             <div style={{
-              lineHeight: '1.7',
-              fontSize: '1rem',
-              color: '#24292f'
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px',
+              marginBottom: '20px'
             }}>
-              {summary.split('\n').map((paragraph, index) => {
-                if (paragraph.trim() === '') return null;
-
-                // Check if it's a heading (starts with # or contains common heading patterns)
-                if (paragraph.startsWith('#') ||
-                    paragraph.toLowerCase().includes('introduction') ||
-                    paragraph.toLowerCase().includes('conclusion') ||
-                    paragraph.toLowerCase().includes('summary') ||
-                    paragraph.toLowerCase().includes('key points') ||
-                    paragraph.toLowerCase().includes('main concepts') ||
-                    /^\d+\./.test(paragraph) || // numbered lists
-                    /^[•\-*]/.test(paragraph) || // bullet points
-                    paragraph.length < 100 && paragraph.includes(':')) { // short lines with colons
-
-                  return (
-                    <div key={index} style={{
-                      marginBottom: '16px',
-                      fontWeight: paragraph.startsWith('#') || paragraph.length < 100 ? '600' : 'normal',
-                      fontSize: paragraph.startsWith('#') || paragraph.length < 100 ? '1.1rem' : '1rem',
-                      color: paragraph.startsWith('#') || paragraph.length < 100 ? '#0969da' : '#24292f'
-                    }}>
-                      {paragraph.startsWith('#') ? paragraph.substring(1).trim() : paragraph}
-                    </div>
-                  );
-                }
-
-                return (
-                  <p key={index} style={{
-                    margin: '0 0 16px 0',
-                    textAlign: 'justify'
-                  }}>
-                    {paragraph}
-                  </p>
-                );
-              })}
+              <div>
+                <h3 style={{ margin: '0 0 6px', color: currentTheme.text, fontSize: '1.3rem' }}>
+                  Rezumat pentru {selectedDoc || 'document'}
+                </h3>
+                <p style={{ margin: 0, color: currentTheme.textSecondary, fontSize: '0.95rem' }}>
+                  Copiază sau exportă rezumatul pentru notițe.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleCopySummary}
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: '14px',
+                    border: 'none',
+                    backgroundColor: currentTheme.primary,
+                    color: '#ffffff',
+                    cursor: 'pointer',
+                    fontWeight: '700'
+                  }}
+                >
+                  Copiază rezumatul
+                </button>
+                <button
+                  onClick={handleDownloadSummary}
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: '14px',
+                    border: `1px solid ${currentTheme.border}`,
+                    backgroundColor: currentTheme.surface,
+                    color: currentTheme.text,
+                    cursor: 'pointer',
+                    fontWeight: '700'
+                  }}
+                >
+                  Exportă text
+                </button>
+              </div>
+            </div>
+            <div style={{
+              whiteSpace: 'pre-wrap',
+              lineHeight: '1.8',
+              color: currentTheme.text,
+              fontSize: '1rem'
+            }}>
+              {summary}
             </div>
           </div>
+        ) : (
+          <div style={{
+            padding: '24px',
+            borderRadius: '22px',
+            border: `1px dashed ${currentTheme.border}`,
+            backgroundColor: currentTheme.cardBg,
+            minHeight: '180px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: currentTheme.textSecondary
+          }}>
+            <p style={{ margin: 0 }}>
+              Rezumatul tău va apărea aici după ce selectezi un document și apeși pe „Generează rezumat”.
+            </p>
+          </div>
         )}
-      </div>
+      </section>
     </div>
   )
 }
