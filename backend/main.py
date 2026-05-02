@@ -14,6 +14,7 @@ MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 DB_DIR = "./local_db"
 UPLOADS_DIR = "uploads"
 EMBEDDING_MODEL = "nomic-embed-text"
+GENERATION_MODEL = "mistral"  # For summarization and chat
 OLLAMA_URL = "http://localhost:11434"
 
 # Ensure upload directory exists
@@ -30,13 +31,14 @@ def check_and_pull_ollama_model():
         models_data = response.json().get("models", [])
         installed_models = [m.get("name") for m in models_data]
         
-        if not any(EMBEDDING_MODEL in m for m in installed_models):
-            print(f"Downloading model {EMBEDDING_MODEL} (this may take a minute)...")
-            pull_response = requests.post(f"{OLLAMA_URL}/api/pull", json={"name": EMBEDDING_MODEL}, stream=False)
-            if pull_response.status_code == 200:
-                print(f"Model {EMBEDDING_MODEL} downloaded successfully!")
-            else:
-                raise Exception(f"Error downloading model: {pull_response.text}")
+        for model in [EMBEDDING_MODEL, GENERATION_MODEL]:
+            if not any(model in m for m in installed_models):
+                print(f"Downloading model {model} (this may take a minute)...")
+                pull_response = requests.post(f"{OLLAMA_URL}/api/pull", json={"name": model}, stream=False)
+                if pull_response.status_code == 200:
+                    print(f"Model {model} downloaded successfully!")
+                else:
+                    raise Exception(f"Error downloading model: {pull_response.text}")
                 
     except requests.exceptions.ConnectionError:
         raise Exception("Ollama is not running. Please install and start Ollama.")
@@ -57,8 +59,7 @@ collection = get_db_collection()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    check_and_pull_ollama_model()
+    # Startup - don't block on model downloads
     yield
     # Shutdown
     pass
@@ -77,6 +78,12 @@ app.add_middleware(
 
 @app.post("/api/upload")
 async def upload_document(file: UploadFile = File(...)):
+    # Check Ollama and models before processing
+    try:
+        check_and_pull_ollama_model()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
+    
     # 1. Validation: Only allow PDF
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
@@ -145,3 +152,56 @@ async def list_documents():
             unique_sources[source] = {"filename": source, "path": meta.get("file_path", "")}
             
     return {"documents": list(unique_sources.values())}
+
+@app.post("/api/summarize/{filename}")
+async def summarize_document(filename: str):
+    # Check Ollama and models before processing
+    try:
+        check_and_pull_ollama_model()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
+    
+    # Retrieve all pages for the document
+    db_data = collection.get(
+        where={"source": filename},
+        include=["documents", "metadatas"]
+    )
+    
+    if not db_data or not db_data["documents"]:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    
+    # Concatenate all text from the document
+    full_text = "\n".join(db_data["documents"])
+    
+    # Prepare summarization prompt
+    prompt = f"""Please provide a structured summary of the following text. Organize it into clear sections with headings, key points, and main concepts. Keep it concise but comprehensive.
+
+Text:
+{full_text}
+
+Structured Summary:"""
+    
+    # Call Ollama for summarization
+    try:
+        response = requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={
+                "model": GENERATION_MODEL,
+                "prompt": prompt,
+                "stream": False
+            },
+            timeout=60  # Allow up to 60 seconds for summarization
+        )
+        
+        if response.status_code != 200:
+            raise Exception(f"Ollama error: {response.text}")
+        
+        result = response.json()
+        summary = result.get("response", "").strip()
+        
+        return {"summary": summary, "filename": filename}
+        
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Summarization timed out. Try with a shorter document.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}")
