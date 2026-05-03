@@ -1,8 +1,10 @@
 version: '3.8'
 
 services:
-  app:
-    build: .
+  backend:
+    build:
+      context: .
+      target: backend
     ports:
       - "8000:8000"
     volumes:
@@ -12,6 +14,15 @@ services:
       - OLLAMA_URL=http://ollama:11434
     depends_on:
       - ollama
+    networks:
+      - app-network
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    ports:
+      - "3000:3000"
     networks:
       - app-network
 
