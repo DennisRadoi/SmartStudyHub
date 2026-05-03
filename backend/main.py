@@ -26,6 +26,7 @@ UPLOADS_DIR = "uploads"
 EMBEDDING_MODEL = "nomic-embed-text"
 GENERATION_MODEL = "mistral"  # For summarization and chat
 OLLAMA_URL = "http://localhost:11434"
+DEVELOPER_SIGNUP_CODE = "dev2026"  # Code for developer role signup
 
 # Ensure upload directory exists
 os.makedirs(UPLOADS_DIR, exist_ok=True)

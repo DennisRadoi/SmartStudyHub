@@ -23,7 +23,40 @@ Smart Study Hub operates as a multi-agent system powered entirely by local proce
 
 ## 🚀 Getting Started
 
-The easiest way to run the project is by using the provided startup scripts. These scripts automatically start both the backend and frontend simultaneously.
+### Quick Start with Docker (Recommended)
+The easiest way to run the project is using Docker, which handles all dependencies automatically.
+
+**For Linux/macOS:**
+```bash
+# Run the Docker startup script
+./run-docker.sh
+```
+
+**For Windows:**
+Double-click the `run-docker.bat` file, or run it from your command prompt:
+```cmd
+run-docker.bat
+```
+
+This will start the entire application stack including:
+- FastAPI backend on port 8000
+- Ollama AI models on port 11434
+- Frontend served by the backend
+
+**Manual Docker commands:**
+```bash
+# Build and start all services
+docker-compose up --build -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+```
+
+### Traditional Startup
+If you prefer to run without Docker, use the provided startup scripts. These scripts automatically start both the backend and frontend simultaneously.
 
 **For Linux/macOS:**
 ```bash
@@ -84,6 +117,47 @@ npm run dev
 - **Backend**: Python, FastAPI, PyPDF.
 - **Ollama** (Mistral, Quen 2.5, nomic-embed-text)
 - **Local Vector DB**: ChromaDB
+
+## 🚀 Deployment & CI/CD
+
+### Docker Deployment
+The application is fully containerized and can be deployed using Docker:
+
+1. **Build the image:**
+   ```bash
+   docker build -t smart-study-hub .
+   ```
+
+2. **Run with Docker Compose:**
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Access the application:**
+   - Frontend: http://localhost:8000
+   - API Docs: http://localhost:8000/docs
+
+### CI/CD Pipeline
+This project includes a GitHub Actions CI/CD pipeline that:
+- Runs automated tests for both backend and frontend
+- Performs code linting and quality checks
+- Builds and pushes Docker images to Docker Hub
+- Supports automated deployment to production
+
+**Pipeline Features:**
+- ✅ Backend testing with pytest and coverage
+- ✅ Frontend testing with Jest
+- ✅ Code linting with flake8
+- ✅ Multi-stage Docker builds
+- ✅ Automated Docker image publishing
+- ✅ Health checks and validation
+
+**Setting up CI/CD:**
+1. Push your code to GitHub
+2. Add Docker Hub credentials as repository secrets:
+   - `DOCKER_USERNAME`: Your Docker Hub username
+   - `DOCKER_PASSWORD`: Your Docker Hub password
+3. The pipeline will automatically run on pushes to `main` branch
 
 ---
 *Developed for a smarter, private, and more efficient studying experience.*
