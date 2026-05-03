@@ -5,4 +5,5 @@ pypdf
 chromadb>=0.5.0
 requests
 pytest
+ollama
 flake8

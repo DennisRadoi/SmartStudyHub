@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   backend:
@@ -29,7 +28,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     ports:
-      - "11434:11434"
+      - "11435:11434" # Changed host port to 11435 to avoid conflict with local Ollama
     volumes:
       - ollama_data:/root/.ollama
     networks:

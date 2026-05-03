@@ -211,6 +211,11 @@ function App() {
       return
     }
 
+    const confirmContinue = window.confirm('Sumarizarea poate dura mai mult timp (până la câteva minute) în special pentru documentele mari. Doriți să continuați?');
+    if (!confirmContinue) {
+      return;
+    }
+
     setSelectedDoc(filename)
     setSummary('')
     setSummarizing(true)
@@ -486,7 +491,7 @@ function App() {
             fontSize: '0.95rem',
             fontWeight: '700'
           }}>
-            GitHub-style Study Hub
+            SmartStudyHub
           </p>
           <h1 style={{
             margin: '12px 0 8px 0',

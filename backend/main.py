@@ -25,7 +25,7 @@ DB_DIR = "./local_db"
 UPLOADS_DIR = "uploads"
 EMBEDDING_MODEL = "nomic-embed-text"
 GENERATION_MODEL = "mistral"  # For summarization and chat
-OLLAMA_URL = "http://localhost:11434"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 DEVELOPER_SIGNUP_CODE = "dev2026"  # Code for developer role signup
 
 # Ensure upload directory exists
@@ -430,7 +430,7 @@ Structured Summary:"""
                 "prompt": prompt,
                 "stream": False
             },
-            timeout=60  # Allow up to 60 seconds for summarization
+            timeout=300  # Allow up to 5 minutes for summarization of large documents
         )
         
         if response.status_code != 200:
