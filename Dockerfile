@@ -21,6 +21,7 @@ COPY backend/ .
 RUN mkdir -p uploads local_db
 
 # Frontend stage
+# Frontend stage
 FROM node:18-alpine as frontend
 
 WORKDIR /app
@@ -28,8 +29,8 @@ WORKDIR /app
 # Copy package files
 COPY frontend/package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (FĂRĂ --only=production)
+RUN npm ci
 
 # Copy frontend code
 COPY frontend/ .
