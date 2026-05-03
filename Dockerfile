@@ -44,6 +44,7 @@ FROM python:3.12-slim
 # Install Ollama (for AI models)
 RUN apt-get update && apt-get install -y \
     curl \
+    zstd \
     && curl -fsSL https://ollama.ai/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
 
