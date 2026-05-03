@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css'
 import 'react-pdf/dist/esm/Page/TextLayer.css'
@@ -11,26 +11,21 @@ function PDFViewer({ pdfUrl, token, onClose }) {
   const [pageNumber, setPageNumber] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [pageWidth, setPageWidth] = useState(null)
+  const viewerRef = useRef(null)
 
-  // Custom loader function for authenticated PDF loading
-  const loadPDF = async () => {
-    try {
-      const response = await fetch(pdfUrl, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+  useEffect(() => {
+    const updateWidth = () => {
+      if (viewerRef.current) {
+        const width = viewerRef.current.clientWidth - 40
+        setPageWidth(width > 0 ? width : null)
       }
-      
-      const arrayBuffer = await response.arrayBuffer()
-      return { data: arrayBuffer }
-    } catch (error) {
-      throw error
     }
-  }
+
+    updateWidth()
+    window.addEventListener('resize', updateWidth)
+    return () => window.removeEventListener('resize', updateWidth)
+  }, [])
 
   function onDocumentLoadSuccess({ numPages }) {
     setNumPages(numPages)
@@ -57,14 +52,19 @@ function PDFViewer({ pdfUrl, token, onClose }) {
   }
 
   return (
-    <div style={{
-      width: '50%',
-      backgroundColor: 'white',
-      borderLeft: '1px solid #e1e4e8',
-      display: 'flex',
-      flexDirection: 'column',
-      boxShadow: '-2px 0 8px rgba(0,0,0,0.1)'
-    }}>
+    <div
+      ref={viewerRef}
+      style={{
+        width: '50%',
+        height: '100vh',
+        backgroundColor: 'white',
+        borderLeft: '1px solid #e1e4e8',
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '-2px 0 8px rgba(0,0,0,0.1)',
+        overflow: 'hidden'
+      }}
+    >
       {/* Header */}
       <div style={{
         padding: '16px 20px',
@@ -120,10 +120,15 @@ function PDFViewer({ pdfUrl, token, onClose }) {
           </div>
         )}
 
-        {!loading && !error && (
+        {!error && (
           <>
             <Document
-              file={loadPDF}
+              file={{
+                url: pdfUrl,
+                httpHeaders: {
+                  Authorization: `Bearer ${token}`
+                }
+              }}
               onLoadSuccess={onDocumentLoadSuccess}
               onLoadError={onDocumentLoadError}
               loading="Se încarcă documentul..."

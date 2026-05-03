@@ -460,16 +460,13 @@ function App() {
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       display: 'flex',
       gap: showPDFViewer ? '24px' : '0',
-      height: '100vh',
       boxSizing: 'border-box'
     }}>
       {/* Main Content */}
       <div style={{
         flex: showPDFViewer ? '1' : '1',
         width: showPDFViewer ? '50%' : '100%',
-        transition: 'all 0.3s ease',
-        height: '100%',
-        overflowY: 'auto'
+        transition: 'all 0.3s ease'
       }}>  <header style={{
         marginBottom: '34px',
         padding: '28px 24px',
