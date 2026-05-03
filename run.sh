@@ -20,6 +20,12 @@ if [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
 fi
 
+echo "📦 Installing backend dependencies..."
+pip install -r requirements.txt
+if [ -f "backend/requirements.txt" ]; then
+    pip install -r backend/requirements.txt
+fi
+
 # Run the backend in the background
 python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
@@ -27,6 +33,10 @@ BACKEND_PID=$!
 # Start Frontend
 echo "⚛️  Starting React Frontend..."
 cd frontend
+
+echo "📦 Installing frontend dependencies..."
+npm install
+
 # Run the frontend in the background
 npm run dev &
 FRONTEND_PID=$!

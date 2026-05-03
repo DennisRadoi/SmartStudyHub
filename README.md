@@ -59,6 +59,7 @@ docker-compose down
 If you prefer to run without Docker, use the provided startup scripts. These scripts automatically start both the backend and frontend simultaneously.
 
 **For Linux/macOS:**
+It is recommended to run inside a venv.
 ```bash
 # Make the script executable (only needed the first time)
 chmod +x run.sh
