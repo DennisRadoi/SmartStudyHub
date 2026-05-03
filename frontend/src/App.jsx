@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import PDFViewer from './PDFViewer'
 
 const API_BASE = 'http://localhost:8000/api'
 
@@ -30,6 +31,12 @@ const theme = {
 }
 
 function App() {
+  const [user, setUser] = useState(null)
+  const [token, setToken] = useState(localStorage.getItem('smartStudyHub-token') || '')
+  const [authMode, setAuthMode] = useState('login') // 'login' or 'signup'
+  const [authLoading, setAuthLoading] = useState(false)
+  const [authError, setAuthError] = useState('')
+
   const [file, setFile] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [message, setMessage] = useState('')
@@ -41,12 +48,22 @@ function App() {
     const saved = localStorage.getItem('smartStudyHub-darkMode')
     return saved ? JSON.parse(saved) : false
   })
+  const [showPDFViewer, setShowPDFViewer] = useState(false)
+  const [currentPDFUrl, setCurrentPDFUrl] = useState('')
 
   const currentTheme = darkMode ? theme.dark : theme.light
 
   useEffect(() => {
-    fetchDocuments()
-  }, [])
+    if (token) {
+      fetchMe()
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (user) {
+      fetchDocuments()
+    }
+  }, [user])
 
   useEffect(() => {
     localStorage.setItem('smartStudyHub-darkMode', JSON.stringify(darkMode))
@@ -59,9 +76,72 @@ function App() {
     setDarkMode((prev) => !prev)
   }
 
+  const fetchMe = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/me`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (response.ok) {
+        const data = await response.json()
+        setUser(data.user)
+      } else {
+        setToken('')
+        localStorage.removeItem('smartStudyHub-token')
+      }
+    } catch (error) {
+      setToken('')
+      localStorage.removeItem('smartStudyHub-token')
+    }
+  }
+
+  const handleAuth = async (formData) => {
+    setAuthLoading(true)
+    setAuthError('')
+    try {
+      const endpoint = authMode === 'login' ? 'login' : 'signup'
+      const response = await fetch(`${API_BASE}/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      })
+      const data = await response.json()
+      if (response.ok) {
+        setToken(data.token)
+        localStorage.setItem('smartStudyHub-token', data.token)
+        setUser(data.user)
+      } else {
+        setAuthError(data.detail || 'Authentication failed')
+      }
+    } catch (error) {
+      setAuthError('Network error. Please try again.')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/logout`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+    } catch (error) {
+      // Ignore logout errors
+    }
+    setToken('')
+    setUser(null)
+    setDocuments([])
+    setSummary('')
+    setSelectedDoc('')
+    setShowPDFViewer(false)
+    setCurrentPDFUrl('')
+    localStorage.removeItem('smartStudyHub-token')
+  }
+
   const fetchDocuments = async () => {
     try {
-      const response = await fetch(`${API_BASE}/documents`)
+      const response = await fetch(`${API_BASE}/documents`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
       if (response.ok) {
         const data = await response.json()
         setDocuments(data.documents)
@@ -106,6 +186,7 @@ function App() {
     try {
       const response = await fetch(`${API_BASE}/upload`, {
         method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
         body: formData
       })
       const data = await response.json()
@@ -137,7 +218,8 @@ function App() {
 
     try {
       const response = await fetch(`${API_BASE}/summarize/${encodeURIComponent(filename)}`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
       })
       const data = await response.json()
 
@@ -176,17 +258,216 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
+  const openPDFViewer = (document) => {
+    // Use the backend API endpoint for serving PDFs
+    const pdfUrl = `${API_BASE}/pdf/${document.filename}`
+    setCurrentPDFUrl(pdfUrl)
+    setShowPDFViewer(true)
+  }
+
+  const closePDFViewer = () => {
+    setShowPDFViewer(false)
+    setCurrentPDFUrl('')
+  }
+
+  if (!user) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        padding: '24px',
+        maxWidth: '480px',
+        margin: '0 auto',
+        color: currentTheme.text,
+        backgroundColor: currentTheme.background,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <div style={{
+          width: '100%',
+          padding: '32px',
+          borderRadius: '24px',
+          backgroundColor: currentTheme.surface,
+          border: `1px solid ${currentTheme.border}`,
+          boxShadow: darkMode ? '0 20px 60px rgba(0,0,0,0.18)' : '0 20px 60px rgba(15, 23, 42, 0.08)'
+        }}>
+          <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+            <h1 style={{ margin: '0 0 8px', fontSize: '2rem', color: currentTheme.text }}>
+              Smart Study Hub
+            </h1>
+            <p style={{ margin: 0, color: currentTheme.textSecondary }}>
+              Studiază mai inteligent, nu mai greu
+            </p>
+          </div>
+
+          <div style={{ marginBottom: '24px', textAlign: 'center' }}>
+            <button
+              onClick={() => setAuthMode('login')}
+              style={{
+                padding: '12px 24px',
+                borderRadius: '12px',
+                border: authMode === 'login' ? `2px solid ${currentTheme.primary}` : `1px solid ${currentTheme.border}`,
+                backgroundColor: authMode === 'login' ? currentTheme.primary : currentTheme.surface,
+                color: authMode === 'login' ? '#ffffff' : currentTheme.text,
+                cursor: 'pointer',
+                fontWeight: '700',
+                marginRight: '12px'
+              }}
+            >
+              Login
+            </button>
+            <button
+              onClick={() => setAuthMode('signup')}
+              style={{
+                padding: '12px 24px',
+                borderRadius: '12px',
+                border: authMode === 'signup' ? `2px solid ${currentTheme.primary}` : `1px solid ${currentTheme.border}`,
+                backgroundColor: authMode === 'signup' ? currentTheme.primary : currentTheme.surface,
+                color: authMode === 'signup' ? '#ffffff' : currentTheme.text,
+                cursor: 'pointer',
+                fontWeight: '700'
+              }}
+            >
+              Sign Up
+            </button>
+          </div>
+
+          <form onSubmit={(e) => {
+            e.preventDefault()
+            const formData = new FormData(e.target)
+            const data = Object.fromEntries(formData.entries())
+            handleAuth(data)
+          }}>
+            <div style={{ display: 'grid', gap: '16px' }}>
+              <input
+                name="username"
+                type="text"
+                placeholder="Username"
+                required
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  border: `1px solid ${currentTheme.border}`,
+                  backgroundColor: currentTheme.cardBg,
+                  color: currentTheme.text,
+                  fontSize: '1rem'
+                }}
+              />
+              <input
+                name="email"
+                type="email"
+                placeholder="Email"
+                required
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  border: `1px solid ${currentTheme.border}`,
+                  backgroundColor: currentTheme.cardBg,
+                  color: currentTheme.text,
+                  fontSize: '1rem'
+                }}
+              />
+              <input
+                name="password"
+                type="password"
+                placeholder="Password"
+                required
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  border: `1px solid ${currentTheme.border}`,
+                  backgroundColor: currentTheme.cardBg,
+                  color: currentTheme.text,
+                  fontSize: '1rem'
+                }}
+              />
+              {authMode === 'signup' && (
+                <input
+                  name="developer_code"
+                  type="password"
+                  placeholder="Developer Code (optional)"
+                  style={{
+                    padding: '14px 16px',
+                    borderRadius: '12px',
+                    border: `1px solid ${currentTheme.border}`,
+                    backgroundColor: currentTheme.cardBg,
+                    color: currentTheme.text,
+                    fontSize: '1rem'
+                  }}
+                />
+              )}
+              <button
+                type="submit"
+                disabled={authLoading}
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  border: 'none',
+                  backgroundColor: authLoading ? currentTheme.buttonDisabled : currentTheme.primary,
+                  color: '#ffffff',
+                  cursor: authLoading ? 'not-allowed' : 'pointer',
+                  fontWeight: '700',
+                  fontSize: '1rem'
+                }}
+              >
+                {authLoading ? 'Processing...' : (authMode === 'login' ? 'Login' : 'Sign Up')}
+              </button>
+            </div>
+          </form>
+
+          {authError && (
+            <div style={{
+              marginTop: '16px',
+              padding: '12px',
+              borderRadius: '12px',
+              backgroundColor: currentTheme.error,
+              color: '#ffffff',
+              textAlign: 'center'
+            }}>
+              {authError}
+            </div>
+          )}
+
+          <div style={{ marginTop: '24px', textAlign: 'center' }}>
+            <button
+              onClick={toggleDarkMode}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: `1px solid ${currentTheme.border}`,
+                backgroundColor: currentTheme.surface,
+                color: currentTheme.text,
+                cursor: 'pointer'
+              }}
+            >
+              {darkMode ? '☀️ Light' : '🌙 Dark'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{
       minHeight: '100vh',
       padding: '24px',
-      maxWidth: '1240px',
+      maxWidth: showPDFViewer ? '1800px' : '1240px',
       margin: '0 auto',
       color: currentTheme.text,
       backgroundColor: currentTheme.background,
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      display: 'flex',
+      gap: showPDFViewer ? '24px' : '0',
+      boxSizing: 'border-box'
     }}>
-      <header style={{
+      {/* Main Content */}
+      <div style={{
+        flex: showPDFViewer ? '1' : '1',
+        width: showPDFViewer ? '50%' : '100%',
+        transition: 'all 0.3s ease'
+      }}>  <header style={{
         marginBottom: '34px',
         padding: '28px 24px',
         borderRadius: '24px',
@@ -223,6 +504,51 @@ function App() {
           }}>
             Încarcă PDF-uri, generează rezumate structurate și exportă notițele direct din browser. Interfața este optimizată pentru citire clară și productivitate.
           </p>
+        </div>
+
+        {/* User greeting and logout */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          gap: '8px'
+        }}>
+          <p style={{
+            margin: 0,
+            color: currentTheme.primary,
+            fontSize: '1.1rem',
+            fontWeight: '600'
+          }}>
+            Salut, {user.username}!
+          </p>
+          <button
+            onClick={() => {
+              setToken('')
+              localStorage.removeItem('smartStudyHub-token')
+              setUser(null)
+            }}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '8px',
+              border: `1px solid ${currentTheme.error}`,
+              backgroundColor: 'transparent',
+              color: currentTheme.error,
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: '600',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseOver={(e) => {
+              e.target.style.backgroundColor = currentTheme.error
+              e.target.style.color = '#ffffff'
+            }}
+            onMouseOut={(e) => {
+              e.target.style.backgroundColor = 'transparent'
+              e.target.style.color = currentTheme.error
+            }}
+          >
+            Logout
+          </button>
         </div>
 
         <button
@@ -363,20 +689,38 @@ function App() {
                         Rezumat structurat pe cerere.
                       </div>
                     </div>
-                    <button
-                      onClick={() => summarizeDocument(doc.filename)}
-                      style={{
-                        padding: '12px 16px',
-                        borderRadius: '14px',
-                        border: 'none',
-                        backgroundColor: currentTheme.primary,
-                        color: '#ffffff',
-                        cursor: 'pointer',
-                        fontWeight: '700'
-                      }}
-                    >
-                      Summarize
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        onClick={() => openPDFViewer(doc)}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          border: `1px solid ${currentTheme.primary}`,
+                          backgroundColor: currentTheme.primary,
+                          color: '#ffffff',
+                          cursor: 'pointer',
+                          fontWeight: '600',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        Vezi PDF
+                      </button>
+                      <button
+                        onClick={() => summarizeDocument(doc.filename)}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          border: `1px solid ${currentTheme.primary}`,
+                          backgroundColor: 'transparent',
+                          color: currentTheme.primary,
+                          cursor: 'pointer',
+                          fontWeight: '600',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        Summarize
+                      </button>
+                    </div>
                   </li>
                 )
               })}
@@ -526,6 +870,16 @@ function App() {
           </div>
         )}
       </section>
+    </div>
+
+    {/* PDF Viewer Side Panel */}
+    {showPDFViewer && (
+      <PDFViewer
+        pdfUrl={currentPDFUrl}
+        token={token}
+        onClose={closePDFViewer}
+      />
+    )}
     </div>
   )
 }
