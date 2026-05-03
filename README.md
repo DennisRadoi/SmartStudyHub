@@ -39,9 +39,9 @@ run-docker.bat
 ```
 
 This will start the entire application stack including:
+- React frontend on port 3000
 - FastAPI backend on port 8000
 - Ollama AI models on port 11434
-- Frontend served by the backend
 
 **Manual Docker commands:**
 ```bash
@@ -134,7 +134,8 @@ The application is fully containerized and can be deployed using Docker:
    ```
 
 3. **Access the application:**
-   - Frontend: http://localhost:8000
+   - Frontend: http://localhost:3000
+   - Backend API: http://localhost:8000
    - API Docs: http://localhost:8000/docs
 
 ### CI/CD Pipeline
@@ -152,12 +153,6 @@ This project includes a GitHub Actions CI/CD pipeline that:
 - ✅ Automated Docker image publishing
 - ✅ Health checks and validation
 
-**Setting up CI/CD:**
-1. Push your code to GitHub
-2. Add Docker Hub credentials as repository secrets:
-   - `DOCKER_USERNAME`: Your Docker Hub username
-   - `DOCKER_PASSWORD`: Your Docker Hub password
-3. The pipeline will automatically run on pushes to `main` branch
 
 ---
 *Developed for a smarter, private, and more efficient studying experience.*

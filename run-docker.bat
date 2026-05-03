@@ -44,6 +44,16 @@ if %errorlevel% equ 0 (
     exit /b 1
 )
 
+REM Check if frontend is running
+curl -f http://localhost:3000 >nul 2>&1
+if %errorlevel% equ 0 (
+    echo ✅ Frontend is running at http://localhost:3000
+) else (
+    echo ❌ Frontend failed to start
+    pause
+    exit /b 1
+)
+
 REM Check if Ollama is running
 curl -f http://localhost:11434/api/tags >nul 2>&1
 if %errorlevel% equ 0 (
@@ -54,8 +64,10 @@ if %errorlevel% equ 0 (
 
 echo.
 echo 🎉 Smart Study Hub is running!
-echo 🌐 Frontend: http://localhost:8000 (served by backend)
+echo 🌐 Frontend: http://localhost:3000
+echo 🔧 Backend API: http://localhost:8000
 echo 📚 API Docs: http://localhost:8000/docs
+echo 🤖 Ollama: http://localhost:11434
 echo.
 echo To stop: %COMPOSE_CMD% down
 echo To view logs: %COMPOSE_CMD% logs -f
