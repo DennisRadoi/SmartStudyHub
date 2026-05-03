@@ -1,7 +1,30 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import PDFViewer from './PDFViewer'
 
 const API_BASE = 'http://localhost:8000/api'
+
+const shimmerStyles = `
+  @keyframes shimmer-glow {
+    0% { background-position: 200% center; }
+    100% { background-position: -200% center; }
+  }
+  .shimmer-text-dark {
+    background: linear-gradient(270deg, #c9d1d9 30%, #ffffff 50%, #c9d1d9 70%);
+    background-size: 200% auto;
+    color: transparent;
+    -webkit-background-clip: text;
+    background-clip: text;
+    animation: shimmer-glow 1.5s linear infinite;
+  }
+  .shimmer-text-light {
+    background: linear-gradient(270deg, #57606a 30%, #ffffff 50%, #57606a 70%);
+    background-size: 200% auto;
+    color: transparent;
+    -webkit-background-clip: text;
+    background-clip: text;
+    animation: shimmer-glow 1.5s linear infinite;
+  }
+`;
 
 const theme = {
   light: {
@@ -51,7 +74,32 @@ function App() {
   const [showPDFViewer, setShowPDFViewer] = useState(false)
   const [currentPDFUrl, setCurrentPDFUrl] = useState('')
 
+  const [chatMessage, setChatMessage] = useState('')
+  const [chatHistory, setChatHistory] = useState([])
+  const [chatLoading, setChatLoading] = useState(false)
+  const [selectedQADoc, setSelectedQADoc] = useState('')
+  const [chatModelName, setChatModelName] = useState('Agent A')
+  const chatEndRef = useRef(null)
+
   const currentTheme = darkMode ? theme.dark : theme.light
+
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/config`)
+        if (response.ok) {
+          const data = await response.json()
+          if (data.chat_model) {
+            // Capitalize first letter if you want, or just set it
+            setChatModelName(data.chat_model)
+          }
+        }
+      } catch (error) {
+        console.error('Fetch config error', error)
+      }
+    }
+    fetchConfig()
+  }, [])
 
   useEffect(() => {
     if (token) {
@@ -64,6 +112,10 @@ function App() {
       fetchDocuments()
     }
   }, [user])
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatHistory])
 
   useEffect(() => {
     localStorage.setItem('smartStudyHub-darkMode', JSON.stringify(darkMode))
@@ -134,7 +186,142 @@ function App() {
     setSelectedDoc('')
     setShowPDFViewer(false)
     setCurrentPDFUrl('')
+    setChatHistory([])
     localStorage.removeItem('smartStudyHub-token')
+  }
+
+  const handleChatSubmit = async (e) => {
+    e.preventDefault()
+    if (!chatMessage.trim()) return
+
+    const messageToSend = chatMessage
+    setChatMessage('')
+    setChatHistory(prev => [...prev, { role: 'user', content: messageToSend }])
+    
+    // Initial empty message that will be filled by the backend stream
+    setChatHistory(prev => [...prev, { role: 'agent', content: '', isStreaming: true }])
+    setChatLoading(true)
+
+    try {
+      const payload = { message: messageToSend }
+      if (selectedQADoc) {
+        payload.filename = selectedQADoc
+      }
+
+      const res = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      })
+      
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        setChatHistory(prev => {
+          const newHistory = [...prev];
+          newHistory[newHistory.length - 1] = { role: 'agent', content: `Eroare: ${errData.detail || 'Nu s-a putut comunica cu Agentul A.'}` };
+          return newHistory;
+        });
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let accumulatedText = "";
+      let accumulatedBuffer = "";
+      let done = false;
+
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        if (value) {
+          accumulatedBuffer += decoder.decode(value, { stream: true });
+          const lines = accumulatedBuffer.split('\n');
+          accumulatedBuffer = lines.pop(); // Keep the last incomplete line in buffer
+
+          let statusMsg = null;
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const data = JSON.parse(line);
+              if (data.type === 'status') {
+                statusMsg = data.content;
+              } else if (data.type === 'text') {
+                accumulatedText += data.content;
+              }
+            } catch (err) {
+              console.error('Failed to parse JSON stream chunk:', line);
+            }
+          }
+          
+          setChatHistory(prev => {
+            const newHistory = [...prev];
+            const lastMsg = newHistory[newHistory.length - 1];
+            if (lastMsg.role === 'agent' && lastMsg.isStreaming) {
+              if (accumulatedText) {
+                lastMsg.content = accumulatedText;
+                lastMsg.status = null;
+              } else if (statusMsg) {
+                lastMsg.status = statusMsg;
+              }
+            }
+            return newHistory;
+          });
+        }
+      }
+
+      // Mark streaming as complete
+      setChatHistory(prev => {
+        const newHistory = [...prev];
+        const lastMsg = newHistory[newHistory.length - 1];
+        if (lastMsg.role === 'agent') {
+          lastMsg.isStreaming = false;
+        }
+        return newHistory;
+      });
+
+    } catch (err) {
+      setChatHistory(prev => {
+        const newHistory = [...prev];
+        newHistory[newHistory.length - 1] = { role: 'agent', content: 'Eroare de rețea.' };
+        return newHistory;
+      });
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
+  const handleDeleteDocument = async (filename) => {
+    if (!window.confirm(`Sunteți sigur că doriți să ștergeți documentul "${filename}"?`)) {
+      return
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/documents/${encodeURIComponent(filename)}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+
+      if (response.ok) {
+        if (selectedDoc === filename) {
+          setSelectedDoc('')
+          setSummary('')
+        }
+        if (selectedQADoc === filename) setSelectedQADoc('')
+        if (showPDFViewer && currentPDFUrl.includes(filename)) closePDFViewer()
+        
+        setMessage(`Documentul ${filename} a fost șters.`)
+        await fetchDocuments()
+      } else {
+        const data = await response.json()
+        setMessage(data.detail || 'Eroare la ștergerea documentului.')
+      }
+    } catch (error) {
+      setMessage('Eroare rețea: ' + error.message)
+    }
   }
 
   const fetchDocuments = async () => {
@@ -467,6 +654,7 @@ function App() {
       gap: showPDFViewer ? '24px' : '0',
       boxSizing: 'border-box'
     }}>
+      <style>{shimmerStyles}</style>
       {/* Main Content */}
       <div style={{
         flex: showPDFViewer ? '1' : '1',
@@ -725,6 +913,21 @@ function App() {
                       >
                         Summarize
                       </button>
+                      <button
+                        onClick={() => handleDeleteDocument(doc.filename)}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          border: `1px solid ${currentTheme.error}`,
+                          backgroundColor: 'transparent',
+                          color: currentTheme.error,
+                          cursor: 'pointer',
+                          fontWeight: '600',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        Șterge
+                      </button>
                     </div>
                   </li>
                 )
@@ -874,6 +1077,132 @@ function App() {
             </p>
           </div>
         )}
+      </section>
+
+      {/* Q&A Section */}
+      <section style={{
+        marginTop: '28px',
+        borderRadius: '24px',
+        padding: '28px',
+        backgroundColor: currentTheme.surface,
+        border: `1px solid ${currentTheme.border}`,
+        boxShadow: darkMode ? '0 20px 60px rgba(0,0,0,0.14)' : '0 20px 60px rgba(15, 23, 42, 0.07)'
+      }}>
+        <div style={{ marginBottom: '22px' }}>
+          <h2 style={{ margin: '0 0 8px', color: currentTheme.text, fontSize: '1.6rem' }}>
+            Q&A cu {chatModelName}
+          </h2>
+          <p style={{ margin: 0, color: currentTheme.textSecondary }}>
+            Adresează întrebări despre conținutul cursurilor tale. {chatModelName} va răspunde folosind informațiile din documentele încărcate.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '22px' }}>
+          <select
+            value={selectedQADoc}
+            onChange={(event) => setSelectedQADoc(event.target.value)}
+            style={{
+              padding: '12px 14px',
+              borderRadius: '14px',
+              border: `1px solid ${currentTheme.border}`,
+              backgroundColor: currentTheme.cardBg,
+              color: currentTheme.text,
+              fontSize: '0.95rem'
+            }}
+          >
+            <option value=''>Toate cursurile</option>
+            {documents.map((doc, index) => (
+              <option key={index} value={doc.filename}>{doc.filename}</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{
+          backgroundColor: currentTheme.cardBg,
+          border: `1px solid ${currentTheme.border}`,
+          borderRadius: '22px',
+          padding: '24px',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: '300px',
+          maxHeight: '500px'
+        }}>
+          <div style={{
+            flex: 1,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+            marginBottom: '20px'
+          }}>
+            {chatHistory.length === 0 ? (
+              <div style={{ textAlign: 'center', color: currentTheme.textSecondary, margin: 'auto' }}>
+                Nu există mesaje. Începe o conversație!
+              </div>
+            ) : (
+              chatHistory.map((msg, i) => (
+                <div key={i} style={{
+                  alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                  backgroundColor: msg.role === 'user' ? currentTheme.primary : currentTheme.surface,
+                  color: msg.role === 'user' ? '#fff' : currentTheme.text,
+                  padding: '12px 18px',
+                  borderRadius: '16px',
+                  border: msg.role === 'user' ? 'none' : `1px solid ${currentTheme.border}`,
+                  maxWidth: '80%',
+                  lineHeight: '1.5',
+                  whiteSpace: 'pre-wrap'
+                }}>
+                  <div style={{ fontSize: '0.85rem', opacity: 0.8, marginBottom: '4px' }}>
+                    {msg.role === 'user' ? 'Tu' : chatModelName}
+                  </div>
+                  {msg.status && !msg.content && (
+                    <div className={darkMode ? 'shimmer-text-dark' : 'shimmer-text-light'} style={{ fontStyle: 'italic' }}>
+                      {msg.status}
+                    </div>
+                  )}
+                  {msg.content && (
+                    <div style={{ opacity: msg.isStreaming ? 0.9 : 1 }}>
+                      {msg.content}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+            <div ref={chatEndRef} />
+          </div>
+          <form onSubmit={handleChatSubmit} style={{ display: 'flex', gap: '12px' }}>
+            <input
+              type="text"
+              value={chatMessage}
+              onChange={(e) => setChatMessage(e.target.value)}
+              placeholder="Întreabă ceva..."
+              style={{
+                flex: 1,
+                padding: '14px 18px',
+                borderRadius: '16px',
+                border: `1px solid ${currentTheme.border}`,
+                backgroundColor: currentTheme.surface,
+                color: currentTheme.text,
+                fontSize: '1rem'
+              }}
+            />
+            <button
+              type="submit"
+              disabled={chatLoading || !chatMessage.trim()}
+              style={{
+                padding: '14px 24px',
+                borderRadius: '16px',
+                border: 'none',
+                backgroundColor: chatLoading || !chatMessage.trim() ? currentTheme.buttonDisabled : currentTheme.primary,
+                color: '#ffffff',
+                cursor: chatLoading || !chatMessage.trim() ? 'not-allowed' : 'pointer',
+                fontWeight: '700'
+              }}
+            >
+              Trimite
+            </button>
+          </form>
+        </div>
       </section>
     </div>
 

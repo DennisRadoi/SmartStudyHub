@@ -8,6 +8,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException, status, Header
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -24,7 +25,8 @@ MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 DB_DIR = "./local_db"
 UPLOADS_DIR = "uploads"
 EMBEDDING_MODEL = "nomic-embed-text"
-GENERATION_MODEL = "mistral"  # For summarization and chat
+GENERATION_MODEL = "mistral"  # For summarization
+CHAT_MODEL = "qwen2.5"           # Agent A (Tutor)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 DEVELOPER_SIGNUP_CODE = "dev2026"  # Code for developer role signup
 
@@ -42,7 +44,7 @@ def check_and_pull_ollama_model():
         models_data = response.json().get("models", [])
         installed_models = [m.get("name") for m in models_data]
         
-        for model in [EMBEDDING_MODEL, GENERATION_MODEL]:
+        for model in [EMBEDDING_MODEL, GENERATION_MODEL, CHAT_MODEL]:
             if not any(model in m for m in installed_models):
                 print(f"Downloading model {model} (this may take a minute)...")
                 pull_response = requests.post(f"{OLLAMA_URL}/api/pull", json={"name": model}, stream=False)
@@ -211,6 +213,7 @@ class LoginRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    filename: Optional[str] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -232,6 +235,10 @@ app.add_middleware(
 
 # Mount static files for PDF access
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
+@app.get("/api/config")
+async def get_config():
+    return {"chat_model": CHAT_MODEL, "generation_model": GENERATION_MODEL}
 
 @app.post("/api/signup")
 async def signup(payload: SignupRequest):
@@ -327,18 +334,32 @@ async def upload_document(file: UploadFile = File(...), authorization: Optional[
         metadatas = []
         ids = []
         
+        def chunk_text(text, chunk_size=1000, overlap=200):
+            chunks = []
+            start = 0
+            text_len = len(text)
+            while start < text_len:
+                end = start + chunk_size
+                chunks.append(text[start:end])
+                start += chunk_size - overlap
+            return chunks
+
         for i, page in enumerate(pdf_reader.pages):
             text = page.extract_text()
             if text and text.strip():
-                documents.append(text)
-                metadatas.append({
-                    "source": file.filename,
-                    "owner_id": owner_id,
-                    "filename": file.filename,
-                    "page": i + 1,
-                    "file_path": file_path
-                })
-                ids.append(f"{owner_id}_{file.filename}_page_{i+1}")
+                page_chunks = chunk_text(text)
+                for j, chunk in enumerate(page_chunks):
+                    if chunk.strip():
+                        documents.append(chunk)
+                        metadatas.append({
+                            "source": file.filename,
+                            "owner_id": owner_id,
+                            "filename": file.filename,
+                            "page": i + 1,
+                            "chunk": j + 1,
+                            "file_path": file_path
+                        })
+                        ids.append(f"{owner_id}_{file.filename}_page_{i+1}_chunk_{j+1}")
                 
         if documents:
             collection.upsert(
@@ -392,6 +413,59 @@ async def list_documents(authorization: Optional[str] = Header(None)):
                 unique_sources[source] = {"filename": source, "file_path": relative_path}
             
     return {"documents": list(unique_sources.values())}
+
+@app.delete("/api/documents/{filename}")
+async def delete_document(filename: str, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if user["role"] == "developer":
+        cursor.execute("SELECT file_path, owner_id FROM documents WHERE filename = ?", (filename,))
+    else:
+        cursor.execute("SELECT file_path, owner_id FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
+        
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Document not found or access denied.")
+        
+    file_path = row["file_path"]
+    owner_id = row["owner_id"]
+    
+    # 1. Delete from disk
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            print(f"Error deleting file: {e}")
+
+    # 2. Delete from database
+    if user["role"] == "developer":
+        cursor.execute("DELETE FROM documents WHERE filename = ?", (filename,))
+    else:
+        cursor.execute("DELETE FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
+    conn.commit()
+    conn.close()
+    
+    # 3. Delete from ChromaDB
+    try:
+        results = collection.get(where={"filename": filename}, include=["metadatas"])
+        if results and results.get("ids"):
+            ids_to_delete = [
+                doc_id for doc_id, meta in zip(results["ids"], results["metadatas"])
+                if user["role"] == "developer" or meta.get("owner_id") == owner_id
+            ]
+            if ids_to_delete:
+                collection.delete(ids=ids_to_delete)
+    except Exception as e:
+        print(f"Error deleting from ChromaDB: {e}")
+
+    return {"message": "Document deleted successfully."}
 
 @app.post("/api/summarize/{filename}")
 async def summarize_document(filename: str):
@@ -453,57 +527,81 @@ async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Head
     token = authorization.split(" ", 1)[1].strip()
     user = get_user_by_token(token)
     
-    # Check Ollama and models before processing
-    try:
-        check_and_pull_ollama_model()
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
-    
-    # Get relevant documents from ChromaDB
-    query_results = collection.query(
-        query_texts=[request.message],
-        n_results=5,
-        include=["documents", "metadatas"]
-    )
-    
-    # Filter results by user ownership or developer role
-    filtered_docs = []
-    filtered_metas = []
-    for doc, meta in zip(query_results["documents"][0], query_results["metadatas"][0]):
-        if user["role"] == "developer" or meta.get("owner_id") == user["id"]:
-            filtered_docs.append(doc)
-            filtered_metas.append(meta)
-    
-    # Build context from filtered documents
-    context = ""
-    if filtered_docs:
-        context = "\n\n".join([
-            f"From {meta['source']} (page {meta['page']}): {doc}"
-            for doc, meta in zip(filtered_docs, filtered_metas)
-        ])
-    
-    # Create prompt with context
-    if context:
-        prompt = f"""You are a helpful AI assistant. Use the following context from the user's documents to answer their question. If the context doesn't contain relevant information, say so and answer based on your general knowledge.
+    async def generate():
+        import asyncio
+        import json
+        
+        # Stream initial status
+        yield json.dumps({"type": "status", "content": "Caut informații relevante în documente..."}) + "\n"
+        await asyncio.sleep(0.1) # flush
+        
+        # Check Ollama and models before processing
+        try:
+            check_and_pull_ollama_model()
+        except Exception as e:
+            yield json.dumps({"type": "status", "content": f"Serviciul Ollama indisponibil: {str(e)}"}) + "\n"
+            return
+        
+        # Get relevant documents from ChromaDB
+        query_kwargs = {
+            "query_texts": [request.message],
+            "n_results": 5,
+            "include": ["documents", "metadatas"]
+        }
+        if request.filename:
+            query_kwargs["where"] = {"source": request.filename}
+            
+        query_results = collection.query(**query_kwargs)
+        
+        # Filter results by user ownership or developer role
+        filtered_docs = []
+        filtered_metas = []
+        for doc, meta in zip(query_results["documents"][0], query_results["metadatas"][0]):
+            if user["role"] == "developer" or meta.get("owner_id") == user["id"]:
+                filtered_docs.append(doc)
+                filtered_metas.append(meta)
+        
+        # Stream second status
+        yield json.dumps({"type": "status", "content": f"Găsite {len(filtered_docs)} secțiuni relevante. Formulez răspunsul..."}) + "\n"
+        await asyncio.sleep(0.1) # flush
+        
+        # Build context from filtered documents
+        context = ""
+        if filtered_docs:
+            context = "\n\n".join([
+                f"From {meta['source']} (page {meta['page']}): {doc}"
+                for doc, meta in zip(filtered_docs, filtered_metas)
+            ])
+        
+        # Create prompt with context
+        if context:
+            prompt = f"""You are an intelligent tutor. Answer the student's question using **ONLY** the information from the course context provided below.
+If the answer is NOT strictly contained in the context, you **MUST** reply with exactly: "Nu am găsit această informație în curs". Do not invent or provide external information.
 
-Context:
+Course Context:
 {context}
 
-Question: {request.message}
+Student Question: {request.message}
 
 Answer:"""
-    else:
-        prompt = f"You are a helpful AI assistant. The user asked: {request.message}"
-    
-    # Get response from Ollama
-    try:
-        response = ollama.chat(
-            model=GENERATION_MODEL,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return {"response": response["message"]["content"]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error communicating with AI: {str(e)}")
+        else:
+            prompt = f"""You are an intelligent tutor that answers ONLY using the course content.
+Since no course context is available, you must answer exactly: "Nu am găsit această informație în curs"."""
+        
+        # Get response from Ollama
+        try:
+            client = ollama.AsyncClient(host=OLLAMA_URL)
+            stream = await client.chat(
+                model=CHAT_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                stream=True
+            )
+            async for chunk in stream:
+                yield json.dumps({"type": "text", "content": chunk["message"]["content"]}) + "\n"
+        except Exception as e:
+            yield json.dumps({"type": "status", "content": f"Eroare model: {str(e)}"}) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 @app.get("/api/pdf/{filename}")
 async def get_pdf(filename: str, authorization: Optional[str] = Header(None)):
