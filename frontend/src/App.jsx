@@ -81,6 +81,17 @@ function App() {
   const [chatModelName, setChatModelName] = useState('Agent A')
   const chatEndRef = useRef(null)
 
+  const [useGemini, setUseGemini] = useState(() => {
+    const saved = localStorage.getItem('smartStudyHub-useGemini')
+    return saved ? JSON.parse(saved) : false
+  })
+  const [geminiApiKey, setGeminiApiKey] = useState(() => {
+    return localStorage.getItem('smartStudyHub-geminiApiKey') || ''
+  })
+  const [showSettings, setShowSettings] = useState(false)
+
+  const activeChatModelName = useGemini ? 'Google Gemini 1.5 Flash' : chatModelName
+
   const currentTheme = darkMode ? theme.dark : theme.light
 
   useEffect(() => {
@@ -123,6 +134,11 @@ function App() {
     document.body.style.backgroundColor = currentTheme.background
     document.body.style.color = currentTheme.text
   }, [darkMode, currentTheme.background, currentTheme.text])
+
+  useEffect(() => {
+    localStorage.setItem('smartStudyHub-useGemini', JSON.stringify(useGemini))
+    localStorage.setItem('smartStudyHub-geminiApiKey', geminiApiKey)
+  }, [useGemini, geminiApiKey])
 
   const toggleDarkMode = () => {
     setDarkMode((prev) => !prev)
@@ -203,7 +219,11 @@ function App() {
     setChatLoading(true)
 
     try {
-      const payload = { message: messageToSend }
+      const payload = { 
+        message: messageToSend,
+        use_gemini: useGemini,
+        gemini_api_key: geminiApiKey
+      }
       if (selectedQADoc) {
         payload.filename = selectedQADoc
       }
@@ -411,7 +431,14 @@ function App() {
     try {
       const response = await fetch(`${API_BASE}/summarize/${encodeURIComponent(filename)}`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          use_gemini: useGemini,
+          gemini_api_key: geminiApiKey
+        })
       })
       const data = await response.json()
 
@@ -744,21 +771,86 @@ function App() {
           </button>
         </div>
 
-        <button
-          onClick={toggleDarkMode}
-          style={{
-            padding: '12px 18px',
-            borderRadius: '12px',
-            border: `1px solid ${currentTheme.border}`,
-            backgroundColor: currentTheme.surface,
-            color: currentTheme.text,
-            cursor: 'pointer',
-            fontWeight: '700'
-          }}
-        >
-          {darkMode ? '🌙 Dark Mode' : '☀️ Light Mode'}
-        </button>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            style={{
+              padding: '12px 18px',
+              borderRadius: '12px',
+              border: `1px solid ${currentTheme.border}`,
+              backgroundColor: currentTheme.surface,
+              color: currentTheme.text,
+              cursor: 'pointer',
+              fontWeight: '700'
+            }}
+          >
+            ⚙️ Setări Model
+          </button>
+          <button
+            onClick={toggleDarkMode}
+            style={{
+              padding: '12px 18px',
+              borderRadius: '12px',
+              border: `1px solid ${currentTheme.border}`,
+              backgroundColor: currentTheme.surface,
+              color: currentTheme.text,
+              cursor: 'pointer',
+              fontWeight: '700'
+            }}
+          >
+            {darkMode ? '🌙 Dark Mode' : '☀️ Light Mode'}
+          </button>
+        </div>
       </header>
+
+      {showSettings && (
+        <section style={{
+          marginBottom: '28px',
+          padding: '24px',
+          borderRadius: '24px',
+          backgroundColor: currentTheme.surface,
+          border: `1px solid ${currentTheme.border}`,
+          boxShadow: darkMode ? '0 10px 30px rgba(0,0,0,0.1)' : '0 10px 30px rgba(15, 23, 42, 0.05)'
+        }}>
+          <h2 style={{ margin: '0 0 16px', color: currentTheme.text, fontSize: '1.4rem' }}>
+            Setări Model AI
+          </h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '500px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
+              <input 
+                type="checkbox" 
+                checked={useGemini} 
+                onChange={(e) => setUseGemini(e.target.checked)}
+                style={{ width: '18px', height: '18px' }}
+              />
+              <span style={{ color: currentTheme.text, fontWeight: '600' }}>Folosește Google Gemini API în loc de modelul local (Ollama)</span>
+            </label>
+            
+            {useGemini && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ color: currentTheme.textSecondary, fontSize: '0.9rem' }}>Gemini API Key</label>
+                <input
+                  type="text"
+                  value={geminiApiKey}
+                  onChange={(e) => setGeminiApiKey(e.target.value)}
+                  placeholder="Introdu cheia ta Gemini API..."
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    border: `1px solid ${currentTheme.border}`,
+                    backgroundColor: currentTheme.cardBg,
+                    color: currentTheme.text,
+                    fontSize: '1rem'
+                  }}
+                />
+                <p style={{ margin: 0, fontSize: '0.85rem', color: currentTheme.textSecondary }}>
+                  Cheia API este salvată local în browser și trimisă doar către backend-ul aplicației.
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section style={{
         display: 'grid',
@@ -1090,10 +1182,10 @@ function App() {
       }}>
         <div style={{ marginBottom: '22px' }}>
           <h2 style={{ margin: '0 0 8px', color: currentTheme.text, fontSize: '1.6rem' }}>
-            Q&A cu {chatModelName}
+            Q&A cu {activeChatModelName}
           </h2>
           <p style={{ margin: 0, color: currentTheme.textSecondary }}>
-            Adresează întrebări despre conținutul cursurilor tale. {chatModelName} va răspunde folosind informațiile din documentele încărcate.
+            Adresează întrebări despre conținutul cursurilor tale. {activeChatModelName} va răspunde folosind informațiile din documentele încărcate.
           </p>
         </div>
 
@@ -1153,7 +1245,7 @@ function App() {
                   whiteSpace: 'pre-wrap'
                 }}>
                   <div style={{ fontSize: '0.85rem', opacity: 0.8, marginBottom: '4px' }}>
-                    {msg.role === 'user' ? 'Tu' : chatModelName}
+                    {msg.role === 'user' ? 'Tu' : activeChatModelName}
                   </div>
                   {msg.status && !msg.content && (
                     <div className={darkMode ? 'shimmer-text-dark' : 'shimmer-text-light'} style={{ fontStyle: 'italic' }}>

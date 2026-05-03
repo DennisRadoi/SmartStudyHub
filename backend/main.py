@@ -214,6 +214,8 @@ class LoginRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     filename: Optional[str] = None
+    use_gemini: bool = False
+    gemini_api_key: Optional[str] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -467,13 +469,18 @@ async def delete_document(filename: str, authorization: Optional[str] = Header(N
 
     return {"message": "Document deleted successfully."}
 
+class SummarizeRequest(BaseModel):
+    use_gemini: bool = False
+    gemini_api_key: Optional[str] = None
+
 @app.post("/api/summarize/{filename}")
-async def summarize_document(filename: str):
+async def summarize_document(filename: str, payload: SummarizeRequest):
     # Check Ollama and models before processing
-    try:
-        check_and_pull_ollama_model()
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
+    if not payload.use_gemini:
+        try:
+            check_and_pull_ollama_model()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
     
     # Retrieve all pages for the document
     db_data = collection.get(
@@ -495,23 +502,55 @@ Text:
 
 Structured Summary:"""
     
-    # Call Ollama for summarization
+    # Call model for summarization
     try:
-        response = requests.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={
-                "model": GENERATION_MODEL,
-                "prompt": prompt,
-                "stream": False
-            },
-            timeout=300  # Allow up to 5 minutes for summarization of large documents
-        )
-        
-        if response.status_code != 200:
-            raise Exception(f"Ollama error: {response.text}")
-        
-        result = response.json()
-        summary = result.get("response", "").strip()
+        if payload.use_gemini and payload.gemini_api_key:
+            import httpx
+            
+            # Fetch valid models dynamically
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                models_resp = await http_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={payload.gemini_api_key}")
+                if models_resp.status_code != 200:
+                    raise Exception(f"Failed to list models: {models_resp.text}")
+                
+                models_data = models_resp.json().get("models", [])
+                valid_models = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
+                
+                if not valid_models:
+                    raise Exception("No generative models available for this API key.")
+                    
+                chosen_model = valid_models[0]
+                for m in valid_models:
+                    if "flash" in m and "1.5" in m:
+                        chosen_model = m
+                        break
+
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:generateContent?key={payload.gemini_api_key}"
+            gemini_payload = {
+                "contents": [{"parts": [{"text": prompt}]}]
+            }
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(gemini_url, json=gemini_payload)
+            if resp.status_code != 200:
+                raise Exception(f"Gemini API error: {resp.text}")
+            result = resp.json()
+            summary = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+        else:
+            response = requests.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={
+                    "model": GENERATION_MODEL,
+                    "prompt": prompt,
+                    "stream": False
+                },
+                timeout=300  # Allow up to 5 minutes for summarization of large documents
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Ollama error: {response.text}")
+            
+            result = response.json()
+            summary = result.get("response", "").strip()
         
         return {"summary": summary, "filename": filename}
         
@@ -536,11 +575,12 @@ async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Head
         await asyncio.sleep(0.1) # flush
         
         # Check Ollama and models before processing
-        try:
-            check_and_pull_ollama_model()
-        except Exception as e:
-            yield json.dumps({"type": "status", "content": f"Serviciul Ollama indisponibil: {str(e)}"}) + "\n"
-            return
+        if not request.use_gemini:
+            try:
+                check_and_pull_ollama_model()
+            except Exception as e:
+                yield json.dumps({"type": "status", "content": f"Serviciul Ollama indisponibil: {str(e)}"}) + "\n"
+                return
         
         # Get relevant documents from ChromaDB
         query_kwargs = {
@@ -588,16 +628,65 @@ Answer:"""
             prompt = f"""You are an intelligent tutor that answers ONLY using the course content.
 Since no course context is available, you must answer exactly: "Nu am găsit această informație în curs"."""
         
-        # Get response from Ollama
+        # Get response from AI Model
         try:
-            client = ollama.AsyncClient(host=OLLAMA_URL)
-            stream = await client.chat(
-                model=CHAT_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                stream=True
-            )
-            async for chunk in stream:
-                yield json.dumps({"type": "text", "content": chunk["message"]["content"]}) + "\n"
+            if request.use_gemini and request.gemini_api_key:
+                import httpx
+                
+                # Fetch available models dynamically first to prevent 404 Not Found
+                async with httpx.AsyncClient(timeout=10.0) as http_client:
+                    models_resp = await http_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={request.gemini_api_key}")
+                    if models_resp.status_code != 200:
+                        yield json.dumps({"type": "status", "content": f"Eroare API la listarea modelelor: {models_resp.text}"}) + "\n"
+                        return
+                    
+                    models_data = models_resp.json().get("models", [])
+                    valid_models = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
+                    
+                    if not valid_models:
+                        yield json.dumps({"type": "status", "content": "Cheia folosită nu are acces la niciun model generativ Gemini."}) + "\n"
+                        return
+
+                    # Prefer a flash model, otherwise pick the first available
+                    chosen_model = valid_models[0]
+                    for m in valid_models:
+                        if "flash" in m and "1.5" in m:
+                            chosen_model = m
+                            break
+                        elif "pro" in m and "1.5" in m:
+                            chosen_model = m
+
+                gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:streamGenerateContent?alt=sse&key={request.gemini_api_key}"
+                gemini_payload = {
+                    "contents": [{"parts": [{"text": prompt}]}]
+                }
+                
+                async with httpx.AsyncClient() as client:
+                    async with client.stream("POST", gemini_url, json=gemini_payload) as resp:
+                        if resp.status_code != 200:
+                            err_text = await resp.aread()
+                            yield json.dumps({"type": "status", "content": f"Eroare Gemini: {err_text.decode()}"}) + "\n"
+                            return
+                        async for line in resp.aiter_lines():
+                            if line.startswith("data: "):
+                                data_str = line[len("data: "):].strip()
+                                if data_str == "[DONE]":
+                                    continue
+                                try:
+                                    data_json = json.loads(data_str)
+                                    text_chunk = data_json["candidates"][0]["content"]["parts"][0]["text"]
+                                    yield json.dumps({"type": "text", "content": text_chunk}) + "\n"
+                                except Exception:
+                                    pass
+            else:
+                client = ollama.AsyncClient(host=OLLAMA_URL)
+                stream = await client.chat(
+                    model=CHAT_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    stream=True
+                )
+                async for chunk in stream:
+                    yield json.dumps({"type": "text", "content": chunk["message"]["content"]}) + "\n"
         except Exception as e:
             yield json.dumps({"type": "status", "content": f"Eroare model: {str(e)}"}) + "\n"
 
