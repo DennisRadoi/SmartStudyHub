@@ -11,7 +11,7 @@ Smart Study Hub is an intelligent, AI-powered local study assistant designed to 
 - **📖 Integrated PDF Viewer:** Read your original documents side-by-side while simultaneously chatting with the AI.
 - **📊 Learning Progress Dashboard:** Track your study habits, view the number of files you've studied, and monitor your average quiz test scores.
 - **💾 History & Export:** Access your past conversations with the AI and export valuable notes and answers into `.txt` or `.md` formats for offline reading.
-- **⚙️ Pluggable Local LLMs:** Easily switch between different local models (like Llama 3, Phi-3, or Mistral) directly from the settings to test performance.
+- **⚙️ Pluggable Local LLMs:** Easily switch between different local models (like Llama 3, Qwen 3.5, or Mistral) directly from the settings to test performance.
 - **🌙 Dark Mode:** An eye-friendly dark interface designed for long, late-night study sessions.
 
 ## 🏗️ System Architecture

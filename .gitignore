@@ -51,4 +51,6 @@ dist-ssr/
 .DS_Store
 Thumbs.db
 
+#authenthification database
+auth.db
 
