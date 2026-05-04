@@ -11,7 +11,7 @@ Smart Study Hub is an intelligent, AI-powered local study assistant designed to 
 - **📖 Integrated PDF Viewer:** Read your original documents side-by-side while simultaneously chatting with the AI.
 - **📊 Learning Progress Dashboard:** Track your study habits, view the number of files you've studied, and monitor your average quiz test scores.
 - **💾 History & Export:** Access your past conversations with the AI and export valuable notes and answers into `.txt` or `.md` formats for offline reading.
-- **⚙️ Pluggable Local LLMs:** Easily switch between different local models (like Llama 3, Qwen 3.5, or Mistral) directly from the settings to test performance.
+- **⚙️ Pluggable LLMs (Local & Cloud):** Easily switch between local models or provide a **Google Gemini API Key** to bypass local models for blazing-fast summarization, Q&A, and quizzes directly from the settings.
 - **🌙 Dark Mode:** An eye-friendly dark interface designed for long, late-night study sessions.
 
 ## 🏗️ System Architecture
@@ -116,7 +116,7 @@ npm run dev
 ## 🛠️ Built With
 - **Frontend**: Node.js, React, Vite.
 - **Backend**: Python, FastAPI, PyPDF.
-- **Ollama** (Mistral, Quen 2.5, nomic-embed-text)
+- **AI Models**: Ollama (Mistral, Qwen 2.5, nomic-embed-text) & Google Gemini REST API.
 - **Local Vector DB**: ChromaDB
 
 ## 🚀 Deployment & CI/CD

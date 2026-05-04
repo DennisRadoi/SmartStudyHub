@@ -79,6 +79,7 @@ function App() {
   const [chatLoading, setChatLoading] = useState(false)
   const [selectedQADoc, setSelectedQADoc] = useState('')
   const [chatModelName, setChatModelName] = useState('Agent A')
+  const [dynamicGeminiModel, setDynamicGeminiModel] = useState('Google Gemini')
   const chatEndRef = useRef(null)
 
   const [useGemini, setUseGemini] = useState(() => {
@@ -90,7 +91,7 @@ function App() {
   })
   const [showSettings, setShowSettings] = useState(false)
 
-  const activeChatModelName = useGemini ? 'Google Gemini 1.5 Flash' : chatModelName
+  const activeChatModelName = useGemini ? dynamicGeminiModel : chatModelName
 
   const currentTheme = darkMode ? theme.dark : theme.light
 
@@ -271,6 +272,8 @@ function App() {
                 statusMsg = data.content;
               } else if (data.type === 'text') {
                 accumulatedText += data.content;
+              } else if (data.type === 'model_name') {
+                setDynamicGeminiModel(data.content);
               }
             } catch (err) {
               console.error('Failed to parse JSON stream chunk:', line);

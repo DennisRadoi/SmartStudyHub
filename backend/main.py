@@ -335,33 +335,19 @@ async def upload_document(file: UploadFile = File(...), authorization: Optional[
         documents = []
         metadatas = []
         ids = []
-        
-        def chunk_text(text, chunk_size=1000, overlap=200):
-            chunks = []
-            start = 0
-            text_len = len(text)
-            while start < text_len:
-                end = start + chunk_size
-                chunks.append(text[start:end])
-                start += chunk_size - overlap
-            return chunks
 
         for i, page in enumerate(pdf_reader.pages):
             text = page.extract_text()
             if text and text.strip():
-                page_chunks = chunk_text(text)
-                for j, chunk in enumerate(page_chunks):
-                    if chunk.strip():
-                        documents.append(chunk)
-                        metadatas.append({
-                            "source": file.filename,
-                            "owner_id": owner_id,
-                            "filename": file.filename,
-                            "page": i + 1,
-                            "chunk": j + 1,
-                            "file_path": file_path
-                        })
-                        ids.append(f"{owner_id}_{file.filename}_page_{i+1}_chunk_{j+1}")
+                documents.append(text.strip())
+                metadatas.append({
+                    "source": file.filename,
+                    "owner_id": owner_id,
+                    "filename": file.filename,
+                    "page": i + 1,
+                    "file_path": file_path
+                })
+                ids.append(f"{owner_id}_{file.filename}_page_{i+1}")
                 
         if documents:
             collection.upsert(
@@ -520,10 +506,10 @@ Structured Summary:"""
                     raise Exception("No generative models available for this API key.")
                     
                 chosen_model = valid_models[0]
-                for m in valid_models:
-                    if "flash" in m and "1.5" in m:
-                        chosen_model = m
-                        break
+                flash_models = [m for m in valid_models if "flash" in m]
+                if flash_models:
+                    flash_models.sort(reverse=True)
+                    chosen_model = flash_models[0]
 
             gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:generateContent?key={payload.gemini_api_key}"
             gemini_payload = {
@@ -649,12 +635,19 @@ Since no course context is available, you must answer exactly: "Nu am găsit ace
 
                     # Prefer a flash model, otherwise pick the first available
                     chosen_model = valid_models[0]
-                    for m in valid_models:
-                        if "flash" in m and "1.5" in m:
-                            chosen_model = m
-                            break
-                        elif "pro" in m and "1.5" in m:
-                            chosen_model = m
+                    flash_models = [m for m in valid_models if "flash" in m]
+                    if flash_models:
+                        flash_models.sort(reverse=True)
+                        chosen_model = flash_models[0]
+                    else:
+                        pro_models = [m for m in valid_models if "pro" in m]
+                        if pro_models:
+                            pro_models.sort(reverse=True)
+                            chosen_model = pro_models[0]
+                
+                # Send the dynamic model name to the frontend
+                yield json.dumps({"type": "model_name", "content": chosen_model.split("/")[-1]}) + "\n"
+                await asyncio.sleep(0.1)
 
                 gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:streamGenerateContent?alt=sse&key={request.gemini_api_key}"
                 gemini_payload = {
