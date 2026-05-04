@@ -545,6 +545,111 @@ Structured Summary:"""
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}")
 
+class QuizRequest(BaseModel):
+    use_gemini: bool = False
+    gemini_api_key: Optional[str] = None
+
+@app.post("/api/quiz/{filename}")
+async def generate_quiz(filename: str, payload: QuizRequest):
+    import json
+    import re
+    
+    if not payload.use_gemini:
+        try:
+            check_and_pull_ollama_model()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
+    
+    db_data = collection.get(
+        where={"source": filename},
+        include=["documents", "metadatas"]
+    )
+    
+    if not db_data or not db_data["documents"]:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    
+    full_text = "\\n".join(db_data["documents"])
+    
+    prompt = f"""Ești Agentul B (Examinatorul). Generează un quiz format din fix 5 întrebări grilă unice baza pe textul de mai jos.
+Fiecare întrebare trebuie să aibă 4 variante de răspuns (A, B, C, D) și o singură variantă corectă.
+Trebuie să răspunzi STRICT cu un singur string JSON valid, care respectă următoarea structură:
+{{
+  "questions": [
+    {{
+      "question": "Textul întrebării",
+      "options": {{
+        "A": "Răspuns 1",
+        "B": "Răspuns 2",
+        "C": "Răspuns 3",
+        "D": "Răspuns 4"
+      }},
+      "correct_answer": "A",
+      "explanation": "Explicația detaliată"
+    }}
+  ]
+}}
+
+Nu adăuga niciun text înainte sau după JSON. Doar JSON-ul valid!
+
+Text:
+{full_text}
+"""
+
+    try:
+        if payload.use_gemini and payload.gemini_api_key:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                models_resp = await http_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={payload.gemini_api_key}")
+                if models_resp.status_code != 200:
+                    raise Exception(f"Failed to list models: {models_resp.text}")
+                
+                models_data = models_resp.json().get("models", [])
+                valid_models = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
+                if not valid_models:
+                    raise Exception("No generative models available for this API key.")
+                    
+                chosen_model = valid_models[0]
+                flash_models = [m for m in valid_models if "flash" in m]
+                if flash_models:
+                    flash_models.sort(reverse=True)
+                    chosen_model = flash_models[0]
+
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:generateContent?key={payload.gemini_api_key}"
+            gemini_payload = {
+                "contents": [{"parts": [{"text": prompt}]}]
+            }
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(gemini_url, json=gemini_payload)
+            if resp.status_code != 200:
+                raise Exception(f"Gemini API error: {resp.text}")
+            result = resp.json()
+            quiz_text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+        else:
+            response = requests.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={
+                    "model": CHAT_MODEL,
+                    "prompt": prompt,
+                    "stream": False
+                },
+                timeout=120
+            )
+            if response.status_code != 200:
+                raise Exception(f"Ollama error: {response.text}")
+            result = response.json()
+            quiz_text = result.get("response", "").strip()
+        
+        # Parse JSON
+        quiz_text = re.sub(r"```json\s*", "", quiz_text)
+        quiz_text = re.sub(r"```\s*", "", quiz_text)
+        quiz_data = json.loads(quiz_text.strip())
+        return {"quiz": quiz_data, "filename": filename}
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Modelul nu a returnat un JSON valid pentru quiz. Mai încercați o dată.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Eroare generare quiz: {str(e)}")
+
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
