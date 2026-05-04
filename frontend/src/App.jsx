@@ -1307,6 +1307,8 @@ function App() {
         pdfUrl={currentPDFUrl}
         token={token}
         onClose={closePDFViewer}
+        currentTheme={currentTheme}
+        darkMode={darkMode}
       />
     )}
     </div>
