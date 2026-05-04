@@ -82,6 +82,12 @@ function App() {
   const [dynamicGeminiModel, setDynamicGeminiModel] = useState('Google Gemini')
   const chatEndRef = useRef(null)
 
+  const [showQuiz, setShowQuiz] = useState(false)
+  const [quizGenerating, setQuizGenerating] = useState(false)
+  const [quizData, setQuizData] = useState(null)
+  const [quizAnswers, setQuizAnswers] = useState({})
+  const [quizSubmitted, setQuizSubmitted] = useState(false)
+
   const [useGemini, setUseGemini] = useState(() => {
     const saved = localStorage.getItem('smartStudyHub-useGemini')
     return saved ? JSON.parse(saved) : false
@@ -455,6 +461,61 @@ function App() {
     } finally {
       setSummarizing(false)
     }
+  }
+
+  const generateQuiz = async (filename) => {
+    if (!filename) {
+      setMessage('Please select a document to generate a quiz.')
+      return
+    }
+
+    setShowQuiz(true)
+    setQuizData(null)
+    setQuizAnswers({})
+    setQuizSubmitted(false)
+    setQuizGenerating(true)
+    setMessage('')
+
+    try {
+      const response = await fetch(`${API_BASE}/quiz/${encodeURIComponent(filename)}`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          use_gemini: useGemini,
+          gemini_api_key: geminiApiKey
+        })
+      })
+      const data = await response.json()
+
+      if (response.ok) {
+        setQuizData(data.quiz)
+      } else {
+        setMessage(data.detail || 'Quiz generation failed.')
+      }
+    } catch (error) {
+      setMessage('Error during quiz generation: ' + error.message)
+    } finally {
+      setQuizGenerating(false)
+    }
+  }
+
+  const handleQuizAnswer = (index, answer) => {
+    if (quizSubmitted) return
+    setQuizAnswers(prev => ({
+      ...prev,
+      [index]: answer
+    }))
+  }
+
+  const submitQuiz = () => {
+    if (Object.keys(quizAnswers).length < quizData?.questions?.length) {
+      alert("Vă rugăm să răspundeți la toate întrebările.")
+      return
+    }
+    setQuizSubmitted(true)
   }
 
   const handleCopySummary = async () => {
@@ -974,7 +1035,7 @@ function App() {
                         {doc.filename}
                       </div>
                       <div style={{ marginTop: '6px', color: currentTheme.textSecondary, fontSize: '0.92rem' }}>
-                        Rezumat structurat pe cerere.
+                        Opțiuni: Rezumat & Quiz
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -1007,6 +1068,21 @@ function App() {
                         }}
                       >
                         Summarize
+                      </button>
+                      <button
+                        onClick={() => generateQuiz(doc.filename)}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          border: `1px solid ${currentTheme.primary}`,
+                          backgroundColor: 'transparent',
+                          color: currentTheme.primary,
+                          cursor: 'pointer',
+                          fontWeight: '600',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        Quiz
                       </button>
                       <button
                         onClick={() => handleDeleteDocument(doc.filename)}
@@ -1049,10 +1125,10 @@ function App() {
         }}>
           <div>
             <h2 style={{ margin: '0 0 8px', color: currentTheme.text, fontSize: '1.6rem' }}>
-              Rezumat structurat
+              Analiză & Examinare
             </h2>
             <p style={{ margin: 0, color: currentTheme.textSecondary }}>
-              Alege documentul și generează un rezumat tip articol web, gata pentru notițele tale.
+              Alege documentul pentru a genera un rezumat structurat sau pentru a-ți testa cunoștințele printr-un quiz interactiv.
             </p>
           </div>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
@@ -1089,10 +1165,175 @@ function App() {
             >
               {summarizing ? 'Generare…' : 'Generează rezumat'}
             </button>
+            <button
+              onClick={() => generateQuiz(selectedDoc)}
+              disabled={!selectedDoc || quizGenerating}
+              style={{
+                padding: '12px 18px',
+                borderRadius: '14px',
+                border: 'none',
+                backgroundColor: !selectedDoc || quizGenerating ? currentTheme.buttonDisabled : '#8a2be2',
+                color: '#ffffff',
+                cursor: !selectedDoc || quizGenerating ? 'not-allowed' : 'pointer',
+                fontWeight: '700'
+              }}
+            >
+              {quizGenerating ? 'Generare Quiz…' : 'Generează Quiz'}
+            </button>
           </div>
         </div>
 
-        {summary ? (
+        {showQuiz ? (
+          <div style={{
+            backgroundColor: currentTheme.cardBg,
+            border: `1px solid ${currentTheme.border}`,
+            borderRadius: '22px',
+            padding: '30px',
+            paddingRight: '10px',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.06)',
+            marginBottom: '30px',
+            position: 'relative'
+          }}>
+            <button
+              onClick={() => setShowQuiz(false)}
+              style={{
+                position: 'absolute',
+                top: '20px',
+                right: '25px',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '8px',
+                color: currentTheme.textSecondary,
+                fontSize: '18px',
+                zIndex: 2
+              }}
+            >
+              ✖
+            </button>
+            <h2 style={{ color: currentTheme.text, marginTop: 0, marginBottom: '25px' }}>Quiz pe document</h2>
+            
+            <div style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: '15px' }}>
+              {quizGenerating ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: currentTheme.textSecondary }}>
+                  <div>Agentul B concepe întrebările (poate dura puțin)...</div>
+                </div>
+              ) : quizData ? (
+                <>
+                  {quizData.questions?.map((q, index) => (
+                    <div key={index} style={{ marginBottom: '25px', padding: '20px', borderRadius: '12px', backgroundColor: currentTheme.surface }}>
+                      <p style={{ fontWeight: '600', marginBottom: '15px', color: currentTheme.text }}>
+                        {index + 1}. {q.question}
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {Object.entries(q.options).map(([key, value]) => {
+                          const isSelected = quizAnswers[index] === key;
+                          const showCorrect = quizSubmitted && q.correct_answer === key;
+                          const showWrong = quizSubmitted && isSelected && q.correct_answer !== key;
+                          
+                          let bgColor = currentTheme.cardBg;
+                          let bdColor = currentTheme.border;
+                          if (showCorrect) {
+                            bgColor = 'rgba(46, 160, 67, 0.1)';
+                            bdColor = '#2ea043';
+                          } else if (showWrong) {
+                            bgColor = 'rgba(248, 81, 73, 0.1)';
+                            bdColor = currentTheme.error;
+                          } else if (isSelected) {
+                            bdColor = currentTheme.primary;
+                            bgColor = darkMode ? 'rgba(88, 166, 255, 0.1)' : '#f0f6fc';
+                          }
+
+                          return (
+                            <label key={key} style={{
+                              padding: '12px 15px',
+                              borderRadius: '8px',
+                              border: `1px solid ${bdColor}`,
+                              backgroundColor: bgColor,
+                              cursor: quizSubmitted ? 'default' : 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                              color: currentTheme.text
+                            }}>
+                              <input 
+                                type="radio" 
+                                name={`question-${index}`} 
+                                value={key}
+                                checked={isSelected}
+                                onChange={() => handleQuizAnswer(index, key)}
+                                disabled={quizSubmitted}
+                                style={{ margin: 0 }}
+                              />
+                              <strong>{key})</strong> {value}
+                            </label>
+                          )
+                        })}
+                      </div>
+                      
+                      {quizSubmitted && (
+                        <div style={{ 
+                          marginTop: '15px', 
+                          padding: '15px', 
+                          backgroundColor: q.correct_answer === quizAnswers[index] ? 'rgba(46, 160, 67, 0.1)' : 'rgba(248, 81, 73, 0.1)',
+                          borderRadius: '8px',
+                          color: currentTheme.text
+                        }}>
+                          {q.correct_answer === quizAnswers[index] ? 
+                            <span style={{color: '#2ea043', fontWeight: 'bold'}}>✓ Corect!</span> : 
+                            <span style={{color: currentTheme.error, fontWeight: 'bold'}}>✗ Greșit. Răspunsul corect era {q.correct_answer}.</span>
+                          }
+                          <p style={{ marginTop: '8px', fontSize: '0.9rem' }}>{q.explanation}</p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  <div style={{ marginTop: '30px', textAlign: 'center' }}>
+                    {quizSubmitted ? (
+                      <div style={{ padding: '20px', borderRadius: '12px', border: `2px solid ${currentTheme.primary}`, color: currentTheme.text }}>
+                        <h3>Scor Final: {Object.keys(quizAnswers).reduce((acc, curr) => acc + (quizAnswers[curr] === quizData.questions[curr].correct_answer ? 1 : 0), 0)} / {quizData.questions.length}</h3>
+                        <button
+                          onClick={() => generateQuiz(selectedDoc)}
+                          style={{
+                            padding: '10px 20px',
+                            marginTop: '10px',
+                            backgroundColor: currentTheme.primary,
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            fontWeight: 'bold'
+                          }}
+                        >
+                          Generează alt quiz
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={submitQuiz}
+                        style={{
+                          padding: '12px 30px',
+                          backgroundColor: '#2ea043',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          fontWeight: 'bold',
+                          fontSize: '16px'
+                        }}
+                      >
+                        Trimite Răspunsurile
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div style={{ color: currentTheme.error }}>A apărut o problemă la afișarea quiz-ului.</div>
+              )}
+            </div>
+          </div>
+        ) : summary ? (
           <div style={{
             backgroundColor: currentTheme.cardBg,
             border: `1px solid ${currentTheme.border}`,
