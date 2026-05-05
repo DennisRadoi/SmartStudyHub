@@ -554,6 +554,7 @@ function App() {
           body: JSON.stringify({
             use_gemini: useGemini,
             gemini_api_key: geminiApiKey,
+            local_model: localModel,
           }),
         }
       );
@@ -596,6 +597,7 @@ function App() {
           body: JSON.stringify({
             use_gemini: useGemini,
             gemini_api_key: geminiApiKey,
+            local_model: localModel,
           }),
         }
       );
