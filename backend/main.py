@@ -176,7 +176,21 @@ def init_auth_db():
             filename TEXT NOT NULL,
             source TEXT NOT NULL,
             file_path TEXT NOT NULL,
+            course_id TEXT,
             uploaded_at REAL NOT NULL,
+            FOREIGN KEY(owner_id) REFERENCES users(id),
+            FOREIGN KEY(course_id) REFERENCES courses(id)
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS courses (
+            id TEXT PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            created_at REAL NOT NULL,
             FOREIGN KEY(owner_id) REFERENCES users(id)
         )
         """
@@ -231,6 +245,9 @@ class ChatRequest(BaseModel):
     gemini_api_key: Optional[str] = None
     local_model: Optional[str] = None
 
+
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup - don't block on model downloads
@@ -239,6 +256,76 @@ async def lifespan(app: FastAPI):
     pass
 
 app = FastAPI(title="Smart Study Hub API", lifespan=lifespan)
+
+# --- Courses API Models and Endpoints ---
+from typing import Optional
+
+class CourseCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+
+
+# --- Courses Endpoints ---
+@app.post("/api/courses")
+async def create_course(payload: CourseCreateRequest, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    course_id = uuid.uuid4().hex
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO courses (id, owner_id, title, description, created_at) VALUES (?, ?, ?, ?, ?)",
+        (course_id, user["id"], payload.title, payload.description, time.time())
+    )
+    conn.commit()
+    conn.close()
+
+    return {"id": course_id, "title": payload.title, "description": payload.description}
+
+
+@app.get("/api/courses")
+async def list_courses(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if user["role"] == "developer":
+        cursor.execute("SELECT * FROM courses ORDER BY created_at DESC")
+    else:
+        cursor.execute("SELECT * FROM courses WHERE owner_id = ? ORDER BY created_at DESC", (user["id"],))
+
+    courses = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    return {"courses": courses}
+
+
+@app.delete("/api/courses/{course_id}")
+async def delete_course(course_id: str, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if user["role"] == "developer":
+        cursor.execute("DELETE FROM courses WHERE id = ?", (course_id,))
+    else:
+        cursor.execute("DELETE FROM courses WHERE id = ? AND owner_id = ?", (course_id, user["id"]))
+
+    conn.commit()
+    conn.close()
+
+    return {"message": "Course deleted"}
 
 # Allow requests from our Node.js frontend
 app.add_middleware(
@@ -325,7 +412,7 @@ async def get_chat_history(authorization: Optional[str] = Header(None)):
     return {"history": history}
 
 @app.post("/api/upload")
-async def upload_document(file: UploadFile = File(...), authorization: Optional[str] = Header(None)):
+async def upload_document(file: UploadFile = File(...), course_id: Optional[str] = None, authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
     token = authorization.split(" ", 1)[1].strip()
@@ -387,6 +474,15 @@ async def upload_document(file: UploadFile = File(...), authorization: Optional[
                 ids=ids
             )
             save_document_record(owner_id, file.filename, file.filename, file_path)
+            if course_id:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE documents SET course_id = ? WHERE owner_id = ? AND filename = ?",
+                    (course_id, owner_id, file.filename)
+                )
+                conn.commit()
+                conn.close()
             return {"message": "✅ Success! Document processed and saved.", "filename": file.filename, "pages": len(documents)}
         else:
             return {"message": "⚠️ Document uploaded, but no text could be extracted (might be scanned/image).", "filename": file.filename, "pages": 0}
@@ -514,6 +610,7 @@ async def delete_document(filename: str, authorization: Optional[str] = Header(N
 class SummarizeRequest(BaseModel):
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
+    local_model: Optional[str] = None
 
 @app.post("/api/summarize/{filename}")
 async def summarize_document(filename: str, payload: SummarizeRequest):
@@ -581,7 +678,7 @@ Structured Summary:"""
             response = requests.post(
                 f"{OLLAMA_URL}/api/generate",
                 json={
-                    "model": GENERATION_MODEL,
+                    "model": payload.local_model if payload.local_model else GENERATION_MODEL,
                     "prompt": prompt,
                     "stream": False
                 },
@@ -604,6 +701,7 @@ Structured Summary:"""
 class QuizRequest(BaseModel):
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
+    local_model: Optional[str] = None
 
 @app.post("/api/quiz/{filename}")
 async def generate_quiz(filename: str, payload: QuizRequest):
@@ -684,7 +782,7 @@ Text:
             response = requests.post(
                 f"{OLLAMA_URL}/api/generate",
                 json={
-                    "model": CHAT_MODEL,
+                    "model": payload.local_model if payload.local_model else CHAT_MODEL,
                     "prompt": prompt,
                     "stream": False
                 },
