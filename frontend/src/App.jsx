@@ -520,7 +520,7 @@ function App() {
 
   const submitQuiz = () => {
     if (Object.keys(quizAnswers).length < quizData?.questions?.length) {
-      alert("Vă rugăm să răspundeți la toate întrebările.")
+      setMessage('Vă rugăm să răspundeți la toate întrebările.')
       return
     }
     setQuizSubmitted(true)

@@ -569,7 +569,7 @@ async def generate_quiz(filename: str, payload: QuizRequest):
     if not db_data or not db_data["documents"]:
         raise HTTPException(status_code=404, detail="Document not found.")
     
-    full_text = "\\n".join(db_data["documents"])
+    full_text = "\n".join(db_data["documents"])
     
     prompt = f"""Ești Agentul B (Examinatorul). Generează un quiz format din fix 5 întrebări grilă unice baza pe textul de mai jos.
 Fiecare întrebare trebuie să aibă 4 variante de răspuns (A, B, C, D) și o singură variantă corectă.
