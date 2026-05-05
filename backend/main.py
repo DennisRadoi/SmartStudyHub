@@ -176,14 +176,40 @@ def init_auth_db():
             filename TEXT NOT NULL,
             source TEXT NOT NULL,
             file_path TEXT NOT NULL,
+            course_id TEXT,
             uploaded_at REAL NOT NULL,
-            FOREIGN KEY(owner_id) REFERENCES users(id)
+            FOREIGN KEY(owner_id) REFERENCES users(id),
+            FOREIGN KEY(course_id) REFERENCES courses(id)
         )
         """
     )
     cursor.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_owner_filename ON documents(owner_id, filename)"
     )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            filename TEXT,
+            message TEXT NOT NULL,
+            response TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    # Migration: ensure legacy databases have the course_id column on documents
+    try:
+        cursor.execute("PRAGMA table_info(documents)")
+        existing_cols = [row[1] for row in cursor.fetchall()]
+        if "course_id" not in existing_cols:
+            cursor.execute("ALTER TABLE documents ADD COLUMN course_id TEXT")
+    except Exception:
+        # If anything goes wrong, don't block startup; the app will handle missing column errors at runtime
+        pass
+>>>>>>> Stashed changes
     conn.commit()
     conn.close()
 
