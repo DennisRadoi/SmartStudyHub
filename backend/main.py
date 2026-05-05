@@ -610,6 +610,7 @@ async def delete_document(filename: str, authorization: Optional[str] = Header(N
 class SummarizeRequest(BaseModel):
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
+    local_model: Optional[str] = None
 
 @app.post("/api/summarize/{filename}")
 async def summarize_document(filename: str, payload: SummarizeRequest):
@@ -677,7 +678,7 @@ Structured Summary:"""
             response = requests.post(
                 f"{OLLAMA_URL}/api/generate",
                 json={
-                    "model": GENERATION_MODEL,
+                    "model": payload.local_model if payload.local_model else GENERATION_MODEL,
                     "prompt": prompt,
                     "stream": False
                 },
@@ -700,6 +701,7 @@ Structured Summary:"""
 class QuizRequest(BaseModel):
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
+    local_model: Optional[str] = None
 
 @app.post("/api/quiz/{filename}")
 async def generate_quiz(filename: str, payload: QuizRequest):
@@ -780,7 +782,7 @@ Text:
             response = requests.post(
                 f"{OLLAMA_URL}/api/generate",
                 json={
-                    "model": CHAT_MODEL,
+                    "model": payload.local_model if payload.local_model else CHAT_MODEL,
                     "prompt": prompt,
                     "stream": False
                 },
