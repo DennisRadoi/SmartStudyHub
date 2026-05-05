@@ -99,10 +99,30 @@ function App() {
     return localStorage.getItem('smartStudyHub-localModel') || 'llama3'
   })
   const [showSettings, setShowSettings] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [globalChatHistory, setGlobalChatHistory] = useState([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
 
   const activeChatModelName = useGemini ? dynamicGeminiModel : chatModelName
 
   const currentTheme = darkMode ? theme.dark : theme.light
+
+  const fetchChatHistory = async () => {
+    setLoadingHistory(true)
+    try {
+      const res = await fetch(`${API_BASE}/chat/history`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setGlobalChatHistory(data.history || [])
+      }
+    } catch (e) {
+      console.error('Failed to fetch chat history', e)
+    } finally {
+      setLoadingHistory(false)
+    }
+  }
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -131,6 +151,7 @@ function App() {
   useEffect(() => {
     if (user) {
       fetchDocuments()
+      fetchChatHistory()
     }
   }, [user])
 
@@ -328,6 +349,7 @@ function App() {
       });
     } finally {
       setChatLoading(false)
+      setTimeout(fetchChatHistory, 500)
     }
   }
 
@@ -742,18 +764,90 @@ function App() {
 
   return (
     <div style={{
-      minHeight: '100vh',
-      padding: '24px',
-      maxWidth: showPDFViewer ? '1800px' : '1240px',
-      margin: '0 auto',
-      color: currentTheme.text,
-      backgroundColor: currentTheme.background,
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       display: 'flex',
-      gap: showPDFViewer ? '24px' : '0',
-      boxSizing: 'border-box'
+      width: '100vw',
+      minHeight: '100vh',
+      overflowX: 'hidden',
+      color: currentTheme.text,
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
     }}>
       <style>{shimmerStyles}</style>
+
+      {/* Sidebar for Chat History */}
+      <div style={{
+        width: sidebarOpen ? '320px' : '0px',
+        opacity: sidebarOpen ? 1 : 0,
+        visibility: sidebarOpen ? 'visible' : 'hidden',
+        backgroundColor: currentTheme.surface,
+        borderRight: sidebarOpen ? `1px solid ${currentTheme.border}` : 'none',
+        transition: 'width 0.3s ease, opacity 0.3s ease',
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        flexShrink: 0,
+        zIndex: 10
+      }}>
+        {sidebarOpen && (
+          <div style={{ padding: '24px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ fontSize: '1.2rem', margin: 0, fontWeight: '600' }}>Istoric Q&A</h2>
+              <button 
+                onClick={() => setSidebarOpen(false)}
+                style={{
+                  background: 'none', border: 'none', color: currentTheme.text, cursor: 'pointer', fontSize: '1.2rem'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            
+            {loadingHistory ? (
+              <p style={{ color: currentTheme.textSecondary }}>Se încarcă istoricul...</p>
+            ) : globalChatHistory.length === 0 ? (
+              <p style={{ color: currentTheme.textSecondary, fontSize: '0.9rem' }}>Nu există istoric.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {globalChatHistory.map(item => (
+                  <div key={item.id} style={{
+                    backgroundColor: currentTheme.cardBg,
+                    border: `1px solid ${currentTheme.border}`,
+                    borderRadius: '8px',
+                    padding: '12px',
+                    fontSize: '0.9rem'
+                  }}>
+                    <div style={{ color: currentTheme.textSecondary, marginBottom: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                      <strong>{item.filename || 'General'}</strong>
+                      <span style={{ fontSize: '0.75rem' }}>{new Date(item.created_at * 1000).toLocaleDateString()}</span>
+                    </div>
+                    <div style={{ fontWeight: '500', marginBottom: '8px' }}>Q: {item.message}</div>
+                    <div style={{ 
+                      color: currentTheme.textSecondary,
+                      maxHeight: '100px',
+                      overflowY: 'auto'
+                    }}>
+                      A: {item.response}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        flex: 1,
+        minHeight: '100vh',
+        padding: '24px',
+        maxWidth: showPDFViewer ? '1800px' : '1240px',
+        margin: '0 auto',
+        color: currentTheme.text,
+        backgroundColor: currentTheme.background,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        display: 'flex',
+        gap: showPDFViewer ? '24px' : '0',
+        boxSizing: 'border-box'
+      }}>
       {/* Main Content */}
       <div style={{
         flex: showPDFViewer ? '1' : '1',
@@ -772,14 +866,34 @@ function App() {
         alignItems: 'center'
       }}>
         <div>
-          <p style={{
-            margin: 0,
-            color: currentTheme.primary,
-            fontSize: '0.95rem',
-            fontWeight: '700'
-          }}>
-            SmartStudyHub
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {!sidebarOpen && (
+              <button
+                onClick={() => setSidebarOpen(true)}
+                title="Deschide Istoricul de Conversații"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '1.5rem',
+                  cursor: 'pointer',
+                  color: currentTheme.text,
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
+              >
+                ☰
+              </button>
+            )}
+            <p style={{
+              margin: 0,
+              color: currentTheme.primary,
+              fontSize: '0.95rem',
+              fontWeight: '700'
+            }}>
+              SmartStudyHub
+            </p>
+          </div>
           <h1 style={{
             margin: '12px 0 8px 0',
             fontSize: '2.6rem',
@@ -946,8 +1060,8 @@ function App() {
       )}
 
       <section style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        display: 'flex',
+        flexDirection: 'column',
         gap: '24px',
         marginBottom: '28px'
       }}>
@@ -1581,6 +1695,7 @@ function App() {
         darkMode={darkMode}
       />
     )}
+      </div>
     </div>
   )
 }

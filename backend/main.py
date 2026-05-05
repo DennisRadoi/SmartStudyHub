@@ -184,6 +184,19 @@ def init_auth_db():
     cursor.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_owner_filename ON documents(owner_id, filename)"
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            filename TEXT,
+            message TEXT NOT NULL,
+            response TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -294,6 +307,23 @@ async def admin_users(authorization: Optional[str] = Header(None)):
     conn.close()
     return {"users": users}
 
+@app.get("/api/chat/history")
+async def get_chat_history(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, filename, message, response, created_at FROM chat_history WHERE user_id = ? ORDER BY created_at ASC",
+        (user["id"],)
+    )
+    history = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return {"history": history}
+
 @app.post("/api/upload")
 async def upload_document(file: UploadFile = File(...), authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -403,6 +433,31 @@ async def list_documents(authorization: Optional[str] = Header(None)):
             
     return {"documents": list(unique_sources.values())}
 
+@app.get("/api/pdf/{filename}")
+async def get_pdf(filename: str, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if user["role"] == "developer":
+        cursor.execute("SELECT file_path FROM documents WHERE filename = ?", (filename,))
+    else:
+        cursor.execute("SELECT file_path FROM documents WHERE owner_id = ? AND filename = ?", (user["id"], filename))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found or unauthorized.")
+        
+    file_path = row["file_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File missing on disk.")
+        
+    return FileResponse(file_path, media_type="application/pdf", filename=filename)
+
 @app.delete("/api/documents/{filename}")
 async def delete_document(filename: str, authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -419,26 +474,26 @@ async def delete_document(filename: str, authorization: Optional[str] = Header(N
         cursor.execute("SELECT file_path, owner_id FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
         
     row = cursor.fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Document not found or access denied.")
+    if row:
+        file_path = row["file_path"]
+        owner_id = row["owner_id"]
         
-    file_path = row["file_path"]
-    owner_id = row["owner_id"]
-    
-    # 1. Delete from disk
-    if os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-        except Exception as e:
-            print(f"Error deleting file: {e}")
+        # 1. Delete from disk
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Error deleting file: {e}")
 
-    # 2. Delete from database
-    if user["role"] == "developer":
-        cursor.execute("DELETE FROM documents WHERE filename = ?", (filename,))
+        # 2. Delete from database
+        if user["role"] == "developer":
+            cursor.execute("DELETE FROM documents WHERE filename = ?", (filename,))
+        else:
+            cursor.execute("DELETE FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
+        conn.commit()
     else:
-        cursor.execute("DELETE FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
-    conn.commit()
+        owner_id = user["id"] # Fallback for deleting ghost files from ChromaDB
+
     conn.close()
     
     # 3. Delete from ChromaDB
@@ -736,6 +791,7 @@ Answer:"""
             prompt = """You are an intelligent tutor that answers ONLY using the course content.
 Since no course context is available, you must answer exactly: "Nu am găsit această informație în curs"."""
         
+        full_response = ""
         try:
             if request.use_gemini and request.gemini_api_key:
                 import httpx
@@ -767,6 +823,7 @@ Since no course context is available, you must answer exactly: "Nu am găsit ace
                                 try:
                                     data_json = json.loads(data_str)
                                     text_chunk = data_json["candidates"][0]["content"]["parts"][0]["text"]
+                                    full_response += text_chunk
                                     yield json.dumps({"type": "text", "content": text_chunk}) + "\n"
                                 except:
                                     pass
@@ -786,7 +843,27 @@ Since no course context is available, you must answer exactly: "Nu am găsit ace
                 )
 
                 async for chunk in stream:
-                    yield json.dumps({"type": "text", "content": chunk["message"]["content"]}) + "\n"
+                    chunk_text = chunk["message"]["content"]
+                    full_response += chunk_text
+                    yield json.dumps({"type": "text", "content": chunk_text}) + "\n"
+
+            # Save the history after successful generation
+            if full_response.strip():
+                def _save_history():
+                    try:
+                        conn_h = sqlite3.connect("auth.db")
+                        cur_h = conn_h.cursor()
+                        cur_h.execute(
+                            "INSERT INTO chat_history (id, user_id, filename, message, response, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                            (uuid.uuid4().hex, user["id"], request.filename, request.message, full_response, time.time())
+                        )
+                        conn_h.commit()
+                        conn_h.close()
+                    except Exception as he:
+                        print("Failed to save chat history:", he)
+                # Quick fire-and-forget logic for saving
+                import threading
+                threading.Thread(target=_save_history).start()
 
         except Exception as e:
             yield json.dumps({"type": "status", "content": f"Eroare model: {str(e)}"}) + "\n"
