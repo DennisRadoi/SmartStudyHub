@@ -433,6 +433,31 @@ async def list_documents(authorization: Optional[str] = Header(None)):
             
     return {"documents": list(unique_sources.values())}
 
+@app.get("/api/pdf/{filename}")
+async def get_pdf(filename: str, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if user["role"] == "developer":
+        cursor.execute("SELECT file_path FROM documents WHERE filename = ?", (filename,))
+    else:
+        cursor.execute("SELECT file_path FROM documents WHERE owner_id = ? AND filename = ?", (user["id"], filename))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found or unauthorized.")
+        
+    file_path = row["file_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File missing on disk.")
+        
+    return FileResponse(file_path, media_type="application/pdf", filename=filename)
+
 @app.delete("/api/documents/{filename}")
 async def delete_document(filename: str, authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -449,26 +474,26 @@ async def delete_document(filename: str, authorization: Optional[str] = Header(N
         cursor.execute("SELECT file_path, owner_id FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
         
     row = cursor.fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Document not found or access denied.")
+    if row:
+        file_path = row["file_path"]
+        owner_id = row["owner_id"]
         
-    file_path = row["file_path"]
-    owner_id = row["owner_id"]
-    
-    # 1. Delete from disk
-    if os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-        except Exception as e:
-            print(f"Error deleting file: {e}")
+        # 1. Delete from disk
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Error deleting file: {e}")
 
-    # 2. Delete from database
-    if user["role"] == "developer":
-        cursor.execute("DELETE FROM documents WHERE filename = ?", (filename,))
+        # 2. Delete from database
+        if user["role"] == "developer":
+            cursor.execute("DELETE FROM documents WHERE filename = ?", (filename,))
+        else:
+            cursor.execute("DELETE FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
+        conn.commit()
     else:
-        cursor.execute("DELETE FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
-    conn.commit()
+        owner_id = user["id"] # Fallback for deleting ghost files from ChromaDB
+
     conn.close()
     
     # 3. Delete from ChromaDB

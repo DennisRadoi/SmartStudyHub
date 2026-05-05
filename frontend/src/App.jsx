@@ -767,7 +767,9 @@ function App() {
       display: 'flex',
       width: '100vw',
       minHeight: '100vh',
-      overflowX: 'hidden'
+      overflowX: 'hidden',
+      color: currentTheme.text,
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
     }}>
       <style>{shimmerStyles}</style>
 
@@ -788,7 +790,7 @@ function App() {
         {sidebarOpen && (
           <div style={{ padding: '24px', flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Istoric QA</h2>
+              <h2 style={{ fontSize: '1.2rem', margin: 0, fontWeight: '600' }}>Istoric Q&A</h2>
               <button 
                 onClick={() => setSidebarOpen(false)}
                 style={{
@@ -1058,8 +1060,8 @@ function App() {
       )}
 
       <section style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        display: 'flex',
+        flexDirection: 'column',
         gap: '24px',
         marginBottom: '28px'
       }}>
