@@ -2,6 +2,8 @@
 venv/
 env/
 .venv/
+venv-msys/
+.tmp/
 
 # Python
 __pycache__/
