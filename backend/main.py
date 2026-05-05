@@ -216,6 +216,7 @@ class ChatRequest(BaseModel):
     filename: Optional[str] = None
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
+    local_model: Optional[str] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -568,7 +569,7 @@ async def generate_quiz(filename: str, payload: QuizRequest):
     if not db_data or not db_data["documents"]:
         raise HTTPException(status_code=404, detail="Document not found.")
     
-    full_text = "\\n".join(db_data["documents"])
+    full_text = "\n".join(db_data["documents"])
     
     prompt = f"""Ești Agentul B (Examinatorul). Generează un quiz format din fix 5 întrebări grilă unice baza pe textul de mai jos.
 Fiecare întrebare trebuie să aibă 4 variante de răspuns (A, B, C, D) și o singură variantă corectă.
@@ -661,19 +662,39 @@ async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Head
         import asyncio
         import json
         
-        # Stream initial status
         yield json.dumps({"type": "status", "content": "Caut informații relevante în documente..."}) + "\n"
-        await asyncio.sleep(0.1) # flush
+        await asyncio.sleep(0.1)
         
-        # Check Ollama and models before processing
+      
         if not request.use_gemini:
             try:
-                check_and_pull_ollama_model()
+                models_to_check = [EMBEDDING_MODEL, GENERATION_MODEL]
+
+                selected_model = request.local_model if request.local_model else CHAT_MODEL
+                models_to_check.append(selected_model)
+
+                response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+                if response.status_code != 200:
+                    raise Exception("Ollama responded with an error.")
+
+                installed_models = [m.get("name") for m in response.json().get("models", [])]
+
+                for model in models_to_check:
+                    if not any(model in m for m in installed_models):
+                        yield json.dumps({
+                            "type": "status",
+                            "content": f"Se descarcă modelul {model}..."
+                        }) + "\n"
+
+                        requests.post(f"{OLLAMA_URL}/api/pull", json={"name": model})
+
             except Exception as e:
-                yield json.dumps({"type": "status", "content": f"Serviciul Ollama indisponibil: {str(e)}"}) + "\n"
+                yield json.dumps({
+                    "type": "status",
+                    "content": f"Serviciul Ollama indisponibil: {str(e)}"
+                }) + "\n"
                 return
         
-        # Get relevant documents from ChromaDB
         query_kwargs = {
             "query_texts": [request.message],
             "n_results": 5,
@@ -684,7 +705,6 @@ async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Head
             
         query_results = collection.query(**query_kwargs)
         
-        # Filter results by user ownership or developer role
         filtered_docs = []
         filtered_metas = []
         for doc, meta in zip(query_results["documents"][0], query_results["metadatas"][0]):
@@ -692,11 +712,9 @@ async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Head
                 filtered_docs.append(doc)
                 filtered_metas.append(meta)
         
-        # Stream second status
         yield json.dumps({"type": "status", "content": f"Găsite {len(filtered_docs)} secțiuni relevante. Formulez răspunsul..."}) + "\n"
-        await asyncio.sleep(0.1) # flush
+        await asyncio.sleep(0.1)
         
-        # Build context from filtered documents
         context = ""
         if filtered_docs:
             context = "\n\n".join([
@@ -704,10 +722,9 @@ async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Head
                 for doc, meta in zip(filtered_docs, filtered_metas)
             ])
         
-        # Create prompt with context
         if context:
             prompt = f"""You are an intelligent tutor. Answer the student's question using **ONLY** the information from the course context provided below.
-If the answer is NOT strictly contained in the context, you **MUST** reply with exactly: "Nu am găsit această informație în curs". Do not invent or provide external information.
+If the answer is NOT strictly contained in the context, you **MUST** reply with exactly: "Nu am găsit această informație în curs".
 
 Course Context:
 {context}
@@ -716,55 +733,32 @@ Student Question: {request.message}
 
 Answer:"""
         else:
-            prompt = f"""You are an intelligent tutor that answers ONLY using the course content.
+            prompt = """You are an intelligent tutor that answers ONLY using the course content.
 Since no course context is available, you must answer exactly: "Nu am găsit această informație în curs"."""
         
-        # Get response from AI Model
         try:
             if request.use_gemini and request.gemini_api_key:
                 import httpx
                 
-                # Fetch available models dynamically first to prevent 404 Not Found
                 async with httpx.AsyncClient(timeout=10.0) as http_client:
                     models_resp = await http_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={request.gemini_api_key}")
-                    if models_resp.status_code != 200:
-                        yield json.dumps({"type": "status", "content": f"Eroare API la listarea modelelor: {models_resp.text}"}) + "\n"
-                        return
-                    
                     models_data = models_resp.json().get("models", [])
                     valid_models = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
-                    
-                    if not valid_models:
-                        yield json.dumps({"type": "status", "content": "Cheia folosită nu are acces la niciun model generativ Gemini."}) + "\n"
-                        return
 
-                    # Prefer a flash model, otherwise pick the first available
                     chosen_model = valid_models[0]
                     flash_models = [m for m in valid_models if "flash" in m]
                     if flash_models:
                         flash_models.sort(reverse=True)
                         chosen_model = flash_models[0]
-                    else:
-                        pro_models = [m for m in valid_models if "pro" in m]
-                        if pro_models:
-                            pro_models.sort(reverse=True)
-                            chosen_model = pro_models[0]
-                
-                # Send the dynamic model name to the frontend
+
                 yield json.dumps({"type": "model_name", "content": chosen_model.split("/")[-1]}) + "\n"
                 await asyncio.sleep(0.1)
 
                 gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:streamGenerateContent?alt=sse&key={request.gemini_api_key}"
-                gemini_payload = {
-                    "contents": [{"parts": [{"text": prompt}]}]
-                }
+                gemini_payload = {"contents": [{"parts": [{"text": prompt}]}]}
                 
                 async with httpx.AsyncClient() as client:
                     async with client.stream("POST", gemini_url, json=gemini_payload) as resp:
-                        if resp.status_code != 200:
-                            err_text = await resp.aread()
-                            yield json.dumps({"type": "status", "content": f"Eroare Gemini: {err_text.decode()}"}) + "\n"
-                            return
                         async for line in resp.aiter_lines():
                             if line.startswith("data: "):
                                 data_str = line[len("data: "):].strip()
@@ -774,44 +768,27 @@ Since no course context is available, you must answer exactly: "Nu am găsit ace
                                     data_json = json.loads(data_str)
                                     text_chunk = data_json["candidates"][0]["content"]["parts"][0]["text"]
                                     yield json.dumps({"type": "text", "content": text_chunk}) + "\n"
-                                except Exception:
+                                except:
                                     pass
             else:
                 client = ollama.AsyncClient(host=OLLAMA_URL)
+
+                # 🔥 MODIFICARE AICI (model name)
+                yield json.dumps({
+                    "type": "model_name",
+                    "content": request.local_model if request.local_model else CHAT_MODEL
+                }) + "\n"
+
                 stream = await client.chat(
-                    model=CHAT_MODEL,
+                    model=request.local_model if request.local_model else CHAT_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     stream=True
                 )
+
                 async for chunk in stream:
                     yield json.dumps({"type": "text", "content": chunk["message"]["content"]}) + "\n"
+
         except Exception as e:
             yield json.dumps({"type": "status", "content": f"Eroare model: {str(e)}"}) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
-
-@app.get("/api/pdf/{filename}")
-async def get_pdf(filename: str, authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
-    token = authorization.split(" ", 1)[1].strip()
-    user = get_user_by_token(token)
-    
-    # Find the document in the database
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    if user["role"] == "developer":
-        cursor.execute("SELECT file_path FROM documents WHERE filename = ?", (filename,))
-    else:
-        cursor.execute("SELECT file_path FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
-    row = cursor.fetchone()
-    conn.close()
-    
-    if not row:
-        raise HTTPException(status_code=404, detail="Document not found or access denied.")
-    
-    file_path = row["file_path"]
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found on disk.")
-    
-    return FileResponse(file_path, media_type="application/pdf", filename=filename)

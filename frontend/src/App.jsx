@@ -95,6 +95,9 @@ function App() {
   const [geminiApiKey, setGeminiApiKey] = useState(() => {
     return localStorage.getItem('smartStudyHub-geminiApiKey') || ''
   })
+  const [localModel, setLocalModel] = useState(() => {
+    return localStorage.getItem('smartStudyHub-localModel') || 'llama3'
+  })
   const [showSettings, setShowSettings] = useState(false)
 
   const activeChatModelName = useGemini ? dynamicGeminiModel : chatModelName
@@ -146,6 +149,10 @@ function App() {
     localStorage.setItem('smartStudyHub-useGemini', JSON.stringify(useGemini))
     localStorage.setItem('smartStudyHub-geminiApiKey', geminiApiKey)
   }, [useGemini, geminiApiKey])
+
+  useEffect(() => {
+    localStorage.setItem('smartStudyHub-localModel', localModel)
+  }, [localModel])
 
   const toggleDarkMode = () => {
     setDarkMode((prev) => !prev)
@@ -229,7 +236,8 @@ function App() {
       const payload = { 
         message: messageToSend,
         use_gemini: useGemini,
-        gemini_api_key: geminiApiKey
+        gemini_api_key: geminiApiKey,
+        local_model: localModel
       }
       if (selectedQADoc) {
         payload.filename = selectedQADoc
@@ -512,7 +520,7 @@ function App() {
 
   const submitQuiz = () => {
     if (Object.keys(quizAnswers).length < quizData?.questions?.length) {
-      alert("Vă rugăm să răspundeți la toate întrebările.")
+      setMessage('Vă rugăm să răspundeți la toate întrebările.')
       return
     }
     setQuizSubmitted(true)
@@ -910,6 +918,27 @@ function App() {
                 <p style={{ margin: 0, fontSize: '0.85rem', color: currentTheme.textSecondary }}>
                   Cheia API este salvată local în browser și trimisă doar către backend-ul aplicației.
                 </p>
+              </div>
+            )}
+            {!useGemini && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label style={{ color: currentTheme.textSecondary, fontSize: '0.9rem' }}>Model local</label>
+                <select
+                  value={localModel}
+                  onChange={(e) => setLocalModel(e.target.value)}
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    border: `1px solid ${currentTheme.border}`,
+                    backgroundColor: currentTheme.cardBg,
+                    color: currentTheme.text,
+                    fontSize: '1rem'
+                  }}
+                >
+                  <option value="llama3">llama3</option>
+                  <option value="mistral">mistral</option>
+                  <option value="qwen2.5">qwen2.5</option>
+                </select>
               </div>
             )}
           </div>
