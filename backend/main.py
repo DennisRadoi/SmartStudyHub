@@ -6,6 +6,7 @@ import hashlib
 import sqlite3
 import time
 import uuid
+import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException, status, Header
 from fastapi.responses import FileResponse, StreamingResponse
@@ -55,6 +56,18 @@ def check_and_pull_ollama_model():
                 
     except requests.exceptions.ConnectionError:
         raise Exception("Ollama is not running. Please install and start Ollama.")
+
+def strip_markdown_formatting(text: str) -> str:
+    """Convert a model response to readable plain text."""
+    text = re.sub(r"```(?:\w+)?\n?(.*?)```", r"\1", text, flags=re.DOTALL)
+    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s{0,3}>\s?", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+[\.)]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"[*_`~]+", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 # Initialize Vector DB
 def get_db_connection():
@@ -634,12 +647,14 @@ async def summarize_document(filename: str, payload: SummarizeRequest):
     full_text = "\n".join(db_data["documents"])
     
     # Prepare summarization prompt
-    prompt = f"""Please provide a structured summary of the following text. Organize it into clear sections with headings, key points, and main concepts. Keep it concise but comprehensive.
+    prompt = f"""Please provide a concise but comprehensive summary of the following text.
+Return only plain text. Do not use Markdown, headings, bullet lists, numbered lists, bold text, tables, code blocks, or special formatting characters.
+Write the summary in short, clear paragraphs.
 
 Text:
 {full_text}
 
-Structured Summary:"""
+Plain text summary:"""
     
     # Call model for summarization
     try:
@@ -690,6 +705,8 @@ Structured Summary:"""
             
             result = response.json()
             summary = result.get("response", "").strip()
+
+        summary = strip_markdown_formatting(summary)
         
         return {"summary": summary, "filename": filename}
         
