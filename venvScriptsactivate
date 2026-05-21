@@ -1,0 +1,455 @@
+[33mcommit c2336803c49bf9ce10f7670545bd0f20d9c81a96[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature/monitorizare-progres[m[33m, [m[1;31morigin/main[m[33m, [m[1;32mmain[m[33m)[m
+Merge: fa854dd 7588b1e
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Wed May 6 00:17:12 2026 +0300
+
+    Merge pull request #20 from DennisRadoi/feature/sectiune-cursuri-fixed
+    
+    fix run.bat
+
+[33mcommit 7588b1e6780ed12620c0da8af565803af8fa0000[m[33m ([m[1;31morigin/feature/sectiune-cursuri-fixed[m[33m)[m
+Merge: ca2a9ab fa854dd
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Wed May 6 00:15:36 2026 +0300
+
+    Merge branch 'main' into feature/sectiune-cursuri-fixed
+
+[33mcommit fa854dd229e76ac639dae11905cb3c617df7810e[m[33m ([m[1;32mbug/run.bat[m[33m)[m
+Merge: 6a42e54 11e7a05
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Tue May 5 23:10:52 2026 +0300
+
+    Merge pull request #19 from DennisRadoi/feature/sectiune-cursuri
+    
+    Feature/sectiune cursuri
+
+[33mcommit ca2a9ab3448db81b4d53c27ee79bc3848e88edbd[m[33m ([m[1;32mfeature/sectiune-cursuri-fixed[m[33m)[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Tue May 5 22:45:12 2026 +0300
+
+    fix run.bat
+
+[33mcommit 11e7a057daa581782c316410795912d3d3c25dc3[m[33m ([m[1;31morigin/feature/sectiune-cursuri[m[33m)[m
+Author: Teo4216 <tpopa162@gmail.com>
+Date:   Tue May 5 21:51:44 2026 +0300
+
+    refactor(frontend): unify AI model state for chat, summarize, and quiz
+    
+    - centralized model selection in the UI (Gemini vs Local)
+    - applied the selected model consistently to all API requests
+    - removed disjointed model settings to improve UX coherence
+
+[33mcommit 27bf45cfeb7060c4054ac94110bac62d53406a93[m
+Author: Teo4216 <tpopa162@gmail.com>
+Date:   Tue May 5 21:51:28 2026 +0300
+
+    refactor(backend): standardize AI model selection across all endpoints
+    
+    - updated summarize, quiz, and chat endpoints to respect global model selection
+    - unified routing logic for Gemini API and local Ollama models
+    - ensured consistency for all text generation tasks
+
+[33mcommit b0710cc9d4fdb8d33d63f5625fd5a3f473c6bb42[m
+Author: Teo4216 <tpopa162@gmail.com>
+Date:   Tue May 5 21:12:13 2026 +0300
+
+    feat(frontend): add courses section and course-based document organization
+    
+    - added courses state and fetching from backend
+    - implemented UI for creating new courses (title + description)
+    - added course selection component
+    - integrated course selection into document upload (course_id)
+    - displayed courses as selectable tags
+    - added dropdown for selecting course when uploading documents
+
+[33mcommit d792eeb4b1cbda8ea942c48a7d4952cdc33f15f3[m
+Author: Teo4216 <tpopa162@gmail.com>
+Date:   Tue May 5 21:11:53 2026 +0300
+
+    feat(backend): implement courses feature and link documents to courses
+    
+    - added Course model
+    - created /api/courses GET endpoint (list user courses)
+    - created /api/courses POST endpoint (create course)
+    - extended upload endpoint to accept course_id
+    - linked uploaded documents to a course
+    - ensured documents without course still supported
+
+[33mcommit 6a42e547e5f0842e009ac04bc558fad5ac026369[m[33m ([m[1;32mfeature/sectiune-cursuri[m[33m)[m
+Merge: c0ab565 6f60f61
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Tue May 5 14:41:02 2026 +0300
+
+    Merge pull request #18 from DennisRadoi/feature/conversation-history
+    
+    Feature/conversation-history
+
+[33mcommit 6f60f61f97154045f10ce9956b13c283f42c9f0b[m[33m ([m[1;31morigin/feature/conversation-history[m[33m)[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Tue May 5 14:37:57 2026 +0300
+
+    Fixed a pdf glitch introduced in the previous commit, moved the divs around to make the pdf view fit with the newer buttons, and fixed a ghost files bug.
+    
+    Co-authored-by: Copilot <copilot@github.com>
+
+[33mcommit c0e460738957d72fc9b57b5bea0a008176dfbe09[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Tue May 5 14:25:00 2026 +0300
+
+    added Q&A history sidebar
+    
+    Co-authored-by: Copilot <copilot@github.com>
+
+[33mcommit c0ab56596692f140dfca8dc5343eed8fd06b96f3[m
+Merge: 3e2c8f5 1916ca4
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Tue May 5 11:04:58 2026 +0300
+
+    Merge pull request #17 from DennisRadoi/feature/schimbare-model-ollama
+    
+    FEAT: Implement local model selection and backend integration
+
+[33mcommit 1916ca453919f254f40082dc83f0dfff2134e85c[m
+Author: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>
+Date:   Tue May 5 07:47:20 2026 +0000
+
+    Fix \\n to \n in quiz text join and replace alert() with setMessage()
+    
+    Agent-Logs-Url: https://github.com/DennisRadoi/SmartStudyHub/sessions/5532a846-1fda-492e-878b-eaaa1bd6cf43
+    
+    Co-authored-by: czanescu <184363584+czanescu@users.noreply.github.com>
+
+[33mcommit b4dd25d7d4e7f9f6a2d46eb1695d7b6b058fae6c[m
+Merge: d704df7 3e2c8f5
+Author: copilot-swe-agent[bot] <198982749+Copilot@users.noreply.github.com>
+Date:   Tue May 5 07:45:47 2026 +0000
+
+    Merge main into feature: keep local model selection and add quiz feature
+    
+    Co-authored-by: czanescu <184363584+czanescu@users.noreply.github.com>
+
+[33mcommit 3e2c8f5808df4e4009cc62b46d58bb6361ebf4ae[m
+Merge: 1defb5b fe31c00
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon May 4 17:05:46 2026 +0300
+
+    Merge pull request #16 from DennisRadoi/feature/automated-quiz
+    
+    Added quiz generation feature
+
+[33mcommit fe31c00fc6ff076cbd2a4edf567790cc382c609f[m[33m ([m[1;31morigin/feature/automated-quiz[m[33m)[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon May 4 16:59:44 2026 +0300
+
+    Added quiz generation feature
+    
+    Co-authored-by: Copilot <copilot@github.com>
+
+[33mcommit d704df73d42b14fb12dabf4cc67b6e2bb1cef429[m
+Author: Teo4216 <tpopa162@gmail.com>
+Date:   Mon May 4 16:19:30 2026 +0300
+
+    FEAT: Implement local model selection and backend integration
+
+[33mcommit 1defb5b405bc31d7774df844477b22478517c8d1[m
+Merge: c423ce8 6dca892
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon May 4 11:47:53 2026 +0300
+
+    Merge pull request #15 from DennisRadoi/bugfix/PDF-scaling
+    
+    Add theme and scaling support to PDF viewer component
+
+[33mcommit 6dca892fb9e5c93c75ca75759592db763627a0f9[m[33m ([m[1;31morigin/bugfix/PDF-scaling[m[33m)[m
+Merge: 7031e1e c423ce8
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon May 4 11:46:34 2026 +0300
+
+    Merge branch 'main' into bugfix/PDF-scaling
+
+[33mcommit 7031e1e4684192ececc5d986b84ad3339c26054e[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon May 4 11:43:33 2026 +0300
+
+    Add theme and scaling support to PDF viewer component
+    
+    Co-authored-by: Copilot <copilot@github.com>
+
+[33mcommit c423ce83a252c71fcc8e4ad5362e3a2030b85fe6[m
+Merge: 09250fb 40cc93f
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon May 4 11:00:30 2026 +0300
+
+    Merge pull request #14 from DennisRadoi/feature/using-gemini-api-key
+    
+    Feature/using gemini api key
+
+[33mcommit 40cc93f83d27c22c2e524bf71d6badaa9a9cba3b[m[33m ([m[1;31morigin/feature/using-gemini-api-key[m[33m)[m
+Merge: 526955a 09250fb
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon May 4 10:58:46 2026 +0300
+
+    Merge branch 'main' into feature/using-gemini-api-key
+
+[33mcommit 526955ad3d7aa7ccf13b157861b779b1ea48ec73[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon May 4 10:54:39 2026 +0300
+
+    small bugfixes and modified the readme
+    
+    Co-authored-by: Copilot <copilot@github.com>
+
+[33mcommit 044269a336b7c64ee90e54eb7cb91ae235203a10[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon May 4 00:32:28 2026 +0300
+
+    adaugat abilitatea de a conecta un api key gemini
+    
+    Co-authored-by: Copilot <copilot@github.com>
+
+[33mcommit 09250fba3c71563130e8a81aa050f2a38188f2a5[m
+Merge: 8ef914f 1d11216
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Sun May 3 23:08:32 2026 +0300
+
+    Merge pull request #13 from DennisRadoi/feature/Q-and-A-with-Agent-A
+    
+    Added the option of chatting with an AI about the given context
+
+[33mcommit 1d11216a0567dd11d998121cc0327bafe20c8ca4[m[33m ([m[1;31morigin/feature/Q-and-A-with-Agent-A[m[33m)[m
+Merge: 22b9a33 8ef914f
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Sun May 3 23:06:55 2026 +0300
+
+    Merge branch 'main' into feature/Q-and-A-with-Agent-A
+
+[33mcommit 22b9a336ff9336339af437dc64acdfde112e95ef[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Sun May 3 23:02:59 2026 +0300
+
+    adaugat feature-ul de Q&A
+    
+    Co-authored-by: Copilot <copilot@github.com>
+
+[33mcommit 7ca226d96505da680c1a6a161d6b646cfdd05952[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Sun May 3 19:17:29 2026 +0300
+
+    sters auth.db din git pentru ca provoca conflicte nenecesare
+
+[33mcommit 8ef914fa9e482e5d42e2d7a346e98cb952f2058b[m
+Merge: 8410337 0d0a237
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Sun May 3 18:11:26 2026 +0300
+
+    Merge pull request #11 from DennisRadoi/bugfix/docker-compatibility
+    
+    various bug fixes
+
+[33mcommit 0d0a237bd0fc7ac7f954dd469ad690bc88b690c7[m[33m ([m[1;31morigin/bugfix/docker-compatibility[m[33m)[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Sun May 3 18:08:19 2026 +0300
+
+    various bug fixes
+
+[33mcommit 8410337a1b083ff02a2cbf9e30f7878f8d8ca535[m
+Merge: d2bd2ef 8e9e599
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 17:09:44 2026 +0300
+
+    Merge pull request #10 from DennisRadoi/feature/dennis-CICD
+    
+    facut run-docker
+
+[33mcommit 8e9e5991d2a7bf46eb813531fcea42944058a04c[m[33m ([m[1;31morigin/feature/dennis-CICD[m[33m)[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 17:03:35 2026 +0300
+
+    facut run-docker
+
+[33mcommit d2bd2efc1392f9b4aac25a588d9e6a9bb7317831[m
+Merge: dfc5e27 530c157
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 16:12:33 2026 +0300
+
+    Merge pull request #9 from DennisRadoi/feature/dennis-CICD
+    
+    terminat ci/cd
+
+[33mcommit 530c15704f5ac309d5c7e5d64ddb2f904d5ceed2[m
+Merge: 3df8f4c dfc5e27
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 16:10:29 2026 +0300
+
+    Merge branch 'main' into feature/dennis-CICD
+
+[33mcommit 3df8f4c5457388762072630d51047fdf27a2583e[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 16:04:19 2026 +0300
+
+    schimbat ci-cd.yml#2
+
+[33mcommit 8fcc890a0de11c8b40bfda673766ffdebbf0b92b[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:59:08 2026 +0300
+
+    schimbat Dockerfile2
+
+[33mcommit dfc5e276c6c8f342a55225da5f0ca11bf3a54574[m
+Merge: 52601d3 460eb86
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:42:42 2026 +0300
+
+    Merge pull request #7 from DennisRadoi/feature/dennis-CICD
+    
+    modificat dockerfile
+
+[33mcommit 460eb86b8be62bed4b022133255616c8008f7053[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:41:00 2026 +0300
+
+    modificat dockerfile
+
+[33mcommit 52601d37a444026b5f9b74a5cf4e7463549f9918[m
+Merge: 99f65b4 2539b93
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:37:00 2026 +0300
+
+    Merge pull request #6 from DennisRadoi/feature/dennis-CICD
+    
+    modificat ci-cd.yml
+
+[33mcommit 2539b9329c967b7b6e372ea62af3c0abf90e6448[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:35:51 2026 +0300
+
+    modificat ci-cd.yml
+
+[33mcommit 99f65b48d61d33ade1ee9bf542beb4eca54eedb0[m
+Merge: 9c978ea d3cce3b
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:29:44 2026 +0300
+
+    Merge pull request #5 from DennisRadoi/feature/dennis-CICD
+    
+    Fix ci/cd
+
+[33mcommit d3cce3ba0a81a966ecbc2a0b473db8351222fde7[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:28:53 2026 +0300
+
+    Fix ci/cd
+
+[33mcommit 9c978eafc8c281e820220d3a4323bb1af70b80d5[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:23:43 2026 +0300
+
+    pipeline ci/cd + docker2
+
+[33mcommit 10329f53ef03dcc13d5dd9b57f93a3891fde8e96[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:23:16 2026 +0300
+
+    pipeline ci/cd + docker
+
+[33mcommit 49e4bbcb52ff940baf887280d66a65c436979e60[m
+Merge: 1607121 e422773
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:14:28 2026 +0300
+
+    Merge pull request #4 from DennisRadoi/feature/vizualizatorPDF-exportNotite
+    
+    Feature/vizualizator pdf export notite
+
+[33mcommit e422773eac180f4e08bdf31760391db5cd789814[m[33m ([m[1;31morigin/feature/vizualizatorPDF-exportNotite[m[33m, [m[1;32mfeature/vizualizatorPDF-exportNotite[m[33m)[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 15:11:41 2026 +0300
+
+    d
+
+[33mcommit 1ee8e3c383e988271db2208eada7684675146425[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 14:59:08 2026 +0300
+
+    efecutat vizualizator pdf
+
+[33mcommit 4303f9be6d1bcc7317d542275de17c8488ea1a61[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sun May 3 14:54:16 2026 +0300
+
+    efectuat export notite + mici schimbari
+
+[33mcommit 1607121190b9c21b9196b7ad0f8c9a7d03675a1f[m[33m ([m[1;31morigin/dennis[m[33m, [m[1;32mdennis[m[33m)[m
+Merge: 2c1adec 7ffcd53
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sat May 2 21:08:27 2026 +0300
+
+    Merge pull request #3 from DennisRadoi/feature/dennis-DarkModeSiinterfata
+    
+    Feature/dennis dark mode si modificat interfata
+
+[33mcommit 7ffcd5369ae3b8eb4f396a1f2dc2779a15fe4969[m[33m ([m[1;31morigin/feature/dennis-DarkModeSiinterfata[m[33m, [m[1;32mfeature/dennis-DarkModeSiinterfata[m[33m)[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sat May 2 21:06:11 2026 +0300
+
+    refacut interfata complet modern
+
+[33mcommit ce2184a6f9055bb7090c246a374e3ad11e6a1289[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sat May 2 20:27:17 2026 +0300
+
+    adaugat dark mode
+
+[33mcommit 2c1adeca0ff6fec7e2099c6c95b270cfc0d88362[m
+Merge: 8dddff9 77d7486
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sat May 2 20:18:10 2026 +0300
+
+    Merge pull request #2 from DennisRadoi/feature/dennis-rezumat
+    
+    Feature/dennis rezumat
+
+[33mcommit 77d748614a170b9c0a40337ce928796d5f8ccd94[m[33m ([m[1;31morigin/feature/dennis-rezumat[m[33m, [m[1;32mfeature/dennis-rezumat[m[33m)[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sat May 2 20:15:51 2026 +0300
+
+    imbunatatire design
+
+[33mcommit 8b6969157a60f38ba814caeecd3fba12a51103a4[m
+Author: Dulaul <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Sat May 2 20:08:27 2026 +0300
+
+    acum nu mai da eroare upload
+
+[33mcommit 8dddff9d6e92ef268846d47117abc36432689a3d[m
+Merge: 0dbae7b 62e0de5
+Author: DennisRadoi <dennis-ionut.radoi@s.unibuc.ro>
+Date:   Thu Mar 26 16:46:50 2026 +0200
+
+    Merge pull request #1 from DennisRadoi/migrare-codebase
+    
+    feat: migrare codebase la o arhitectura React + FastAPI
+
+[33mcommit 62e0de58e74fd79ea6ec2e0cd2db71075f89f99e[m[33m ([m[1;31morigin/migrare-codebase[m[33m)[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Thu Mar 26 15:36:28 2026 +0200
+
+    Update AI model references in README
+
+[33mcommit 9dd845154d97a8835d50c4e4dcb41bb9aa84b875[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Thu Mar 26 13:03:12 2026 +0200
+
+    feat: migrare codebase la o arhitectura React + FastAPI
+
+[33mcommit 0dbae7b8596edbb03e42f6f4db5484d84c0c8f07[m[33m ([m[1;31morigin/feature/pdf-upload[m[33m)[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon Mar 23 16:55:26 2026 +0200
+
+    adaugat check pentru modelul de embedding
+
+[33mcommit e2fb7ed10b50481e10a9e7e9816ec6b360743ec5[m
+Author: Cristian Zănescu <cristian.zanescu@s.unibuc.ro>
+Date:   Mon Mar 23 16:47:38 2026 +0200
+
+    Prototip încărcare PDF cu python, streamlit și ollama

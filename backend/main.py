@@ -6,6 +6,7 @@ import hashlib
 import sqlite3
 import time
 import uuid
+import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException, status, Header
 from fastapi.responses import FileResponse, StreamingResponse
@@ -55,6 +56,18 @@ def check_and_pull_ollama_model():
                 
     except requests.exceptions.ConnectionError:
         raise Exception("Ollama is not running. Please install and start Ollama.")
+
+def strip_markdown_formatting(text: str) -> str:
+    """Convert a model response to readable plain text."""
+    text = re.sub(r"```(?:\w+)?\n?(.*?)```", r"\1", text, flags=re.DOTALL)
+    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s{0,3}>\s?", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+[\.)]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"[*_`~]+", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 # Initialize Vector DB
 def get_db_connection():
@@ -211,6 +224,19 @@ def init_auth_db():
         )
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quiz_attempts (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            score INTEGER NOT NULL,
+            total_questions INTEGER NOT NULL,
+            created_at REAL NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -244,6 +270,11 @@ class ChatRequest(BaseModel):
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
     local_model: Optional[str] = None
+
+class QuizAttemptRequest(BaseModel):
+    filename: str
+    score: int
+    total_questions: int
 
 
 
@@ -526,8 +557,99 @@ async def list_documents(authorization: Optional[str] = Header(None)):
                 # Convert absolute path to relative URL path
                 relative_path = os.path.basename(file_path) if file_path else ""
                 unique_sources[source] = {"filename": source, "file_path": relative_path}
-            
+
     return {"documents": list(unique_sources.values())}
+
+@app.get("/api/dashboard")
+async def get_dashboard(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if user["role"] == "developer":
+        cursor.execute("SELECT COUNT(*) AS count FROM documents")
+    else:
+        cursor.execute(
+            "SELECT COUNT(*) AS count FROM documents WHERE owner_id = ?",
+            (user["id"],),
+        )
+    studied_files = cursor.fetchone()["count"]
+
+    if user["role"] == "developer":
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS attempts,
+                   AVG(CASE WHEN total_questions > 0 THEN (score * 100.0 / total_questions) END) AS average_score
+            FROM quiz_attempts
+            """
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS attempts,
+                   AVG(CASE WHEN total_questions > 0 THEN (score * 100.0 / total_questions) END) AS average_score
+            FROM quiz_attempts
+            WHERE user_id = ?
+            """,
+            (user["id"],),
+        )
+    quiz_stats = cursor.fetchone()
+    conn.close()
+
+    return {
+        "studied_files": studied_files,
+        "average_quiz_score": round(quiz_stats["average_score"] or 0, 1),
+        "quiz_attempts": quiz_stats["attempts"],
+    }
+
+@app.post("/api/quiz-attempts")
+async def save_quiz_attempt(payload: QuizAttemptRequest, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    if payload.total_questions <= 0:
+        raise HTTPException(status_code=400, detail="Quiz must include at least one question.")
+    if payload.score < 0 or payload.score > payload.total_questions:
+        raise HTTPException(status_code=400, detail="Invalid quiz score.")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if user["role"] == "developer":
+        cursor.execute("SELECT 1 FROM documents WHERE filename = ? LIMIT 1", (payload.filename,))
+    else:
+        cursor.execute(
+            "SELECT 1 FROM documents WHERE filename = ? AND owner_id = ? LIMIT 1",
+            (payload.filename, user["id"]),
+        )
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    cursor.execute(
+        """
+        INSERT INTO quiz_attempts (id, user_id, filename, score, total_questions, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            uuid.uuid4().hex,
+            user["id"],
+            payload.filename,
+            payload.score,
+            payload.total_questions,
+            time.time(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    return {"message": "Quiz attempt saved."}
 
 @app.get("/api/pdf/{filename}")
 async def get_pdf(filename: str, authorization: Optional[str] = Header(None)):
@@ -584,8 +706,13 @@ async def delete_document(filename: str, authorization: Optional[str] = Header(N
         # 2. Delete from database
         if user["role"] == "developer":
             cursor.execute("DELETE FROM documents WHERE filename = ?", (filename,))
+            cursor.execute("DELETE FROM quiz_attempts WHERE filename = ?", (filename,))
         else:
             cursor.execute("DELETE FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
+            cursor.execute(
+                "DELETE FROM quiz_attempts WHERE filename = ? AND user_id = ?",
+                (filename, user["id"]),
+            )
         conn.commit()
     else:
         owner_id = user["id"] # Fallback for deleting ghost files from ChromaDB
@@ -634,12 +761,14 @@ async def summarize_document(filename: str, payload: SummarizeRequest):
     full_text = "\n".join(db_data["documents"])
     
     # Prepare summarization prompt
-    prompt = f"""Please provide a structured summary of the following text. Organize it into clear sections with headings, key points, and main concepts. Keep it concise but comprehensive.
+    prompt = f"""Please provide a concise but comprehensive summary of the following text.
+Return only plain text. Do not use Markdown, headings, bullet lists, numbered lists, bold text, tables, code blocks, or special formatting characters.
+Write the summary in short, clear paragraphs.
 
 Text:
 {full_text}
 
-Structured Summary:"""
+Plain text summary:"""
     
     # Call model for summarization
     try:
@@ -690,6 +819,8 @@ Structured Summary:"""
             
             result = response.json()
             summary = result.get("response", "").strip()
+
+        summary = strip_markdown_formatting(summary)
         
         return {"summary": summary, "filename": filename}
         

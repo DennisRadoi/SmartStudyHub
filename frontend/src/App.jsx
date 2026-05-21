@@ -66,6 +66,11 @@ function App() {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
   const [documents, setDocuments] = useState([]);
+  const [dashboardStats, setDashboardStats] = useState({
+    studied_files: 0,
+    average_quiz_score: 0,
+    quiz_attempts: 0,
+  });
   const [courses, setCourses] = useState([]);
   const [selectedCourse, setSelectedCourse] = useState("");
   const [newCourseTitle, setNewCourseTitle] = useState("");
@@ -169,10 +174,29 @@ function App() {
   useEffect(() => {
     if (user) {
       fetchDocuments();
+      fetchDashboard();
       fetchCourses();
       fetchChatHistory();
     }
   }, [user]);
+
+  const fetchDashboard = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/dashboard`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setDashboardStats({
+          studied_files: data.studied_files || 0,
+          average_quiz_score: data.average_quiz_score || 0,
+          quiz_attempts: data.quiz_attempts || 0,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to load dashboard", error);
+    }
+  };
   const fetchCourses = async () => {
     try {
       const response = await fetch(`${API_BASE}/courses`, {
@@ -292,6 +316,11 @@ function App() {
     setToken("");
     setUser(null);
     setDocuments([]);
+    setDashboardStats({
+      studied_files: 0,
+      average_quiz_score: 0,
+      quiz_attempts: 0,
+    });
     setSummary("");
     setSelectedDoc("");
     setShowPDFViewer(false);
@@ -444,6 +473,7 @@ function App() {
 
         setMessage(`Documentul ${filename} a fost șters.`);
         await fetchDocuments();
+        await fetchDashboard();
       } else {
         const data = await response.json();
         setMessage(data.detail || "Eroare la ștergerea documentului.");
@@ -516,6 +546,7 @@ function App() {
         setMessage(data.message || "Document uploaded successfully.");
         setFile(null);
         await fetchDocuments();
+        await fetchDashboard();
       } else {
         setMessage(data.detail || "Upload failed. Please try again.");
       }
@@ -578,6 +609,7 @@ function App() {
       return;
     }
 
+    setSelectedDoc(filename);
     setShowQuiz(true);
     setQuizData(null);
     setQuizAnswers({});
@@ -623,12 +655,43 @@ function App() {
     }));
   };
 
-  const submitQuiz = () => {
+  const calculateQuizScore = () => {
+    if (!quizData?.questions?.length) return 0;
+    return quizData.questions.reduce(
+      (score, question, index) =>
+        score + (quizAnswers[index] === question.correct_answer ? 1 : 0),
+      0
+    );
+  };
+
+  const submitQuiz = async () => {
     if (Object.keys(quizAnswers).length < quizData?.questions?.length) {
       setMessage("Vă rugăm să răspundeți la toate întrebările.");
       return;
     }
+    const score = calculateQuizScore();
     setQuizSubmitted(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/quiz-attempts`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          filename: selectedDoc,
+          score,
+          total_questions: quizData.questions.length,
+        }),
+      });
+
+      if (response.ok) {
+        await fetchDashboard();
+      }
+    } catch (error) {
+      console.error("Failed to save quiz attempt", error);
+    }
   };
 
   const handleCopySummary = async () => {
@@ -1311,6 +1374,86 @@ function App() {
           )}
           <section
             style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: "16px",
+              marginBottom: "28px",
+            }}
+          >
+            <article
+              style={{
+                padding: "22px",
+                borderRadius: "16px",
+                backgroundColor: currentTheme.surface,
+                border: `1px solid ${currentTheme.border}`,
+              }}
+            >
+              <p
+                style={{
+                  margin: "0 0 10px",
+                  color: currentTheme.textSecondary,
+                  fontSize: "0.95rem",
+                  fontWeight: "700",
+                }}
+              >
+                Fișiere studiate
+              </p>
+              <div
+                style={{
+                  color: currentTheme.text,
+                  fontSize: "2.2rem",
+                  lineHeight: 1,
+                  fontWeight: "800",
+                }}
+              >
+                {dashboardStats.studied_files}
+              </div>
+            </article>
+
+            <article
+              style={{
+                padding: "22px",
+                borderRadius: "16px",
+                backgroundColor: currentTheme.surface,
+                border: `1px solid ${currentTheme.border}`,
+              }}
+            >
+              <p
+                style={{
+                  margin: "0 0 10px",
+                  color: currentTheme.textSecondary,
+                  fontSize: "0.95rem",
+                  fontWeight: "700",
+                }}
+              >
+                Scor mediu quiz-uri
+              </p>
+              <div
+                style={{
+                  color: currentTheme.text,
+                  fontSize: "2.2rem",
+                  lineHeight: 1,
+                  fontWeight: "800",
+                }}
+              >
+                {dashboardStats.quiz_attempts > 0
+                  ? `${dashboardStats.average_quiz_score}%`
+                  : "N/A"}
+              </div>
+              <p
+                style={{
+                  margin: "10px 0 0",
+                  color: currentTheme.textSecondary,
+                  fontSize: "0.9rem",
+                }}
+              >
+                {dashboardStats.quiz_attempts} quiz
+                {dashboardStats.quiz_attempts === 1 ? "" : "-uri"} finalizate
+              </p>
+            </article>
+          </section>
+          <section
+            style={{
               display: "flex",
               flexDirection: "column",
               gap: "24px",
@@ -1973,15 +2116,7 @@ function App() {
                           >
                             <h3>
                               Scor Final:{" "}
-                              {Object.keys(quizAnswers).reduce(
-                                (acc, curr) =>
-                                  acc +
-                                  (quizAnswers[curr] ===
-                                  quizData.questions[curr].correct_answer
-                                    ? 1
-                                    : 0),
-                                0
-                              )}{" "}
+                              {calculateQuizScore()}{" "}
                               / {quizData.questions.length}
                             </h3>
                             <button
