@@ -56,3 +56,6 @@ Thumbs.db
 #authenthification database
 auth.db
 
+# Eval secrets
+evals/models.json
+
