@@ -1,0 +1,43 @@
+{
+  "ollama_url": "http://localhost:11434",
+  "models": [
+    "mistral",
+    "qwen2.5",
+    "qwen3.5",
+    "qwen3.5:4b",
+    "gemma2:2b",
+    "gemma3:1b",
+    "gemma3:4b",
+    "gemma3n",
+    "gemma4:e2b",
+    "phi3:mini"
+
+  ],
+  "gemini": {
+    "enabled": false,
+    "api_key": "",
+    "models": [
+      "models/gemini-1.5-flash",
+      "models/gemini-1.5-pro"
+    ]
+  },
+  "tasks": {
+    "summarize": true,
+    "quiz": true,
+    "qa": {
+      "enabled": true,
+      "questions": [
+        "What is the main goal or topic of this document?",
+        "Summarize the key points in 3 to 5 sentences."
+      ]
+    }
+  },
+  "max_input_chars": 12000,
+  "timeout_seconds": 300,
+  "embedding_model": "nomic-embed-text",
+  "qa_use_embeddings": true,
+  "qa_top_k": 5,
+  "chroma_dir": "evals/chroma_db",
+  "pdf_dir": "inputs/pdfs",
+  "output_file": "outputs/results.jsonl"
+}
