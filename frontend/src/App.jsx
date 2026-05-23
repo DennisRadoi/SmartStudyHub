@@ -96,8 +96,35 @@ function App() {
   const [chatHistory, setChatHistory] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [selectedQADoc, setSelectedQADoc] = useState("");
-  const [chatModelName, setChatModelName] = useState("Agent A");
-  const [dynamicGeminiModel, setDynamicGeminiModel] = useState("Google Gemini");
+  const [localModelAgentA, setLocalModelAgentA] = useState(() => {
+    return localStorage.getItem("smartStudyHub-localModelAgentA") || "";
+  });
+  const [localModelAgentB, setLocalModelAgentB] = useState(() => {
+    return localStorage.getItem("smartStudyHub-localModelAgentB") || "";
+  });
+  const [geminiModelAgentA, setGeminiModelAgentA] = useState(() => {
+    return localStorage.getItem("smartStudyHub-geminiModelAgentA") || "";
+  });
+  const [geminiModelAgentB, setGeminiModelAgentB] = useState(() => {
+    return localStorage.getItem("smartStudyHub-geminiModelAgentB") || "";
+  });
+  const [geminiModels, setGeminiModels] = useState([]);
+  const [geminiModelsLoading, setGeminiModelsLoading] = useState(false);
+  const [geminiModelsError, setGeminiModelsError] = useState("");
+  const [ollamaModels, setOllamaModels] = useState([]);
+  const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false);
+  const [ollamaModelsError, setOllamaModelsError] = useState("");
+  const [ollamaModelToAdd, setOllamaModelToAdd] = useState("");
+  const [ollamaPullProgress, setOllamaPullProgress] = useState(null);
+  const [ollamaPullStatus, setOllamaPullStatus] = useState("");
+  const [ollamaPulling, setOllamaPulling] = useState(false);
+  const ollamaPullControllerRef = useRef(null);
+  const [agentAModelSelection, setAgentAModelSelection] = useState(() => {
+    return localStorage.getItem("smartStudyHub-agentAModelSelection") || "";
+  });
+  const [agentBModelSelection, setAgentBModelSelection] = useState(() => {
+    return localStorage.getItem("smartStudyHub-agentBModelSelection") || "";
+  });
   const chatEndRef = useRef(null);
 
   const [showQuiz, setShowQuiz] = useState(false);
@@ -119,16 +146,35 @@ function App() {
   const [geminiApiKey, setGeminiApiKey] = useState(() => {
     return localStorage.getItem("smartStudyHub-geminiApiKey") || "";
   });
-  const [localModel, setLocalModel] = useState(() => {
-    return localStorage.getItem("smartStudyHub-localModel") || "llama3";
-  });
-
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [globalChatHistory, setGlobalChatHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  const activeChatModelName = useGemini ? dynamicGeminiModel : chatModelName;
+  const getGeminiDisplayName = (modelName) => {
+    if (!modelName) return "Google Gemini";
+    return modelName.split("/").pop();
+  };
+  const parseModelSelection = (value) => {
+    if (!value) return { source: null, model: "" };
+    if (value.startsWith("gemini:")) {
+      return { source: "gemini", model: value.slice("gemini:".length) };
+    }
+    if (value.startsWith("ollama:")) {
+      return { source: "ollama", model: value.slice("ollama:".length) };
+    }
+    return { source: null, model: value };
+  };
+  const agentASelection = parseModelSelection(agentAModelSelection);
+  const agentBSelection = parseModelSelection(agentBModelSelection);
+  const activeAgentAModelName =
+    agentASelection.source === "gemini"
+      ? getGeminiDisplayName(agentASelection.model)
+      : agentASelection.model || "Agent A";
+  const activeAgentBModelName =
+    agentBSelection.source === "gemini"
+      ? getGeminiDisplayName(agentBSelection.model)
+      : agentBSelection.model || "Agent B";
   const currentTheme = darkMode ? theme.dark : theme.light;
 
   const fetchChatHistory = async () => {
@@ -154,9 +200,8 @@ function App() {
         const response = await fetch(`${API_BASE}/config`);
         if (response.ok) {
           const data = await response.json();
-          if (data.chat_model) {
-            setChatModelName(data.chat_model);
-          }
+          setLocalModelAgentA((prev) => prev || data.chat_model || "llama3");
+          setLocalModelAgentB((prev) => prev || data.generation_model || "mistral");
         }
       } catch (error) {
         console.error("Fetch config error", error);
@@ -164,6 +209,110 @@ function App() {
     };
     fetchConfig();
   }, []);
+
+  const fetchOllamaModels = async () => {
+    if (!token) return;
+    setOllamaModelsLoading(true);
+    setOllamaModelsError("");
+    try {
+      const response = await fetch(`${API_BASE}/ollama/models`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        throw new Error("Nu s-au putut prelua modelele Ollama.");
+      }
+      const data = await response.json();
+      setOllamaModels(data.models || []);
+    } catch (error) {
+      setOllamaModelsError(error.message || "Eroare la incarcarea modelelor Ollama.");
+    } finally {
+      setOllamaModelsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (token) {
+      fetchOllamaModels();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!ollamaModels.length) return;
+    setLocalModelAgentA((prev) => (ollamaModels.includes(prev) ? prev : ollamaModels[0]));
+    setLocalModelAgentB((prev) => (ollamaModels.includes(prev) ? prev : ollamaModels[0]));
+  }, [ollamaModels]);
+
+  useEffect(() => {
+    const ollamaOptions = ollamaModels.map((model) => `ollama:${model}`);
+    const geminiOptions = useGemini
+      ? geminiModels.map((model) => `gemini:${model}`)
+      : [];
+    const combinedOptions = [...ollamaOptions, ...geminiOptions];
+
+    if (!combinedOptions.length) return;
+
+    setAgentAModelSelection((prev) => {
+      if (combinedOptions.includes(prev)) return prev;
+      if (useGemini && geminiOptions.length) return geminiOptions[0];
+      return ollamaOptions[0] || prev;
+    });
+    setAgentBModelSelection((prev) => {
+      if (combinedOptions.includes(prev)) return prev;
+      if (useGemini && geminiOptions.length) return geminiOptions[0];
+      return ollamaOptions[0] || prev;
+    });
+  }, [ollamaModels, geminiModels, useGemini]);
+
+  useEffect(() => {
+    if (!useGemini || !geminiApiKey) {
+      setGeminiModels([]);
+      setGeminiModelsError("");
+      return;
+    }
+
+    const controller = new AbortController();
+    let isActive = true;
+
+    const fetchGeminiModels = async () => {
+      setGeminiModelsLoading(true);
+      setGeminiModelsError("");
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`,
+          { signal: controller.signal }
+        );
+        if (!response.ok) {
+          throw new Error("Nu s-au putut prelua modelele Gemini.");
+        }
+        const data = await response.json();
+        const models = (data.models || [])
+          .filter((model) =>
+            (model.supportedGenerationMethods || []).includes("generateContent")
+          )
+          .map((model) => model.name);
+
+        if (!models.length) {
+          throw new Error("Nu exista modele Gemini disponibile pentru acest key.");
+        }
+
+        if (!isActive) return;
+        setGeminiModels(models);
+        setGeminiModelAgentA((prev) => (models.includes(prev) ? prev : models[0]));
+        setGeminiModelAgentB((prev) => (models.includes(prev) ? prev : models[0]));
+      } catch (error) {
+        if (!isActive || error.name === "AbortError") return;
+        setGeminiModelsError(error.message || "Eroare la incarcarea modelelor Gemini.");
+      } finally {
+        if (isActive) setGeminiModelsLoading(false);
+      }
+    };
+
+    fetchGeminiModels();
+    return () => {
+      isActive = false;
+      controller.abort();
+    };
+  }, [useGemini, geminiApiKey]);
 
   useEffect(() => {
     if (token) {
@@ -257,8 +406,35 @@ function App() {
   }, [useGemini, geminiApiKey]);
 
   useEffect(() => {
-    localStorage.setItem("smartStudyHub-localModel", localModel);
-  }, [localModel]);
+    localStorage.setItem("smartStudyHub-localModelAgentA", localModelAgentA);
+    localStorage.setItem("smartStudyHub-localModelAgentB", localModelAgentB);
+  }, [localModelAgentA, localModelAgentB]);
+
+  useEffect(() => {
+    localStorage.setItem("smartStudyHub-geminiModelAgentA", geminiModelAgentA);
+    localStorage.setItem("smartStudyHub-geminiModelAgentB", geminiModelAgentB);
+  }, [geminiModelAgentA, geminiModelAgentB]);
+
+  useEffect(() => {
+    localStorage.setItem("smartStudyHub-agentAModelSelection", agentAModelSelection);
+    localStorage.setItem("smartStudyHub-agentBModelSelection", agentBModelSelection);
+  }, [agentAModelSelection, agentBModelSelection]);
+
+  useEffect(() => {
+    if (agentASelection.source === "gemini") {
+      setGeminiModelAgentA(agentASelection.model);
+    } else if (agentASelection.source === "ollama") {
+      setLocalModelAgentA(agentASelection.model);
+    }
+  }, [agentASelection.source, agentASelection.model]);
+
+  useEffect(() => {
+    if (agentBSelection.source === "gemini") {
+      setGeminiModelAgentB(agentBSelection.model);
+    } else if (agentBSelection.source === "ollama") {
+      setLocalModelAgentB(agentBSelection.model);
+    }
+  }, [agentBSelection.source, agentBSelection.model]);
 
   const toggleDarkMode = () => {
     setDarkMode((prev) => !prev);
@@ -329,6 +505,88 @@ function App() {
     localStorage.removeItem("smartStudyHub-token");
   };
 
+  const handlePullOllamaModel = async () => {
+    if (!ollamaModelToAdd.trim() || !token) return;
+    if (ollamaPullControllerRef.current) {
+      ollamaPullControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    ollamaPullControllerRef.current = controller;
+    setOllamaPulling(true);
+    setOllamaPullProgress(null);
+    setOllamaPullStatus("Pornesc descarcarea...");
+    try {
+      const response = await fetch(`${API_BASE}/ollama/pull`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: ollamaModelToAdd.trim() }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error("Nu s-a putut porni descarcarea modelului.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let done = false;
+
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const data = JSON.parse(line);
+              if (data.type === "progress") {
+                const completed = data.completed || 0;
+                const total = data.total || 0;
+                const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+                setOllamaPullProgress(percent);
+                setOllamaPullStatus(data.status || "Descarcare in progres...");
+              } else if (data.type === "error") {
+                setOllamaPullStatus(data.message || "Eroare la descarcare.");
+              } else if (data.type === "done") {
+                setOllamaPullProgress(100);
+                setOllamaPullStatus("Model instalat.");
+              }
+            } catch (err) {}
+          }
+        }
+      }
+
+      await fetchOllamaModels();
+      setOllamaModelToAdd("");
+    } catch (error) {
+      if (error.name === "AbortError") {
+        setOllamaPullStatus("Descarcare anulata.");
+      } else {
+        setOllamaPullStatus(error.message || "Eroare la descarcare.");
+      }
+    } finally {
+      setOllamaPulling(false);
+      ollamaPullControllerRef.current = null;
+      setTimeout(() => {
+        setOllamaPullProgress(null);
+        setOllamaPullStatus("");
+      }, 1500);
+    }
+  };
+
+  const handleCancelOllamaPull = () => {
+    if (ollamaPullControllerRef.current) {
+      ollamaPullControllerRef.current.abort();
+    }
+  };
+
   const handleChatSubmit = async (e) => {
     e.preventDefault();
     if (!chatMessage.trim()) return;
@@ -345,9 +603,10 @@ function App() {
     try {
       const payload = {
         message: messageToSend,
-        use_gemini: useGemini,
+        use_gemini: agentASelection.source === "gemini",
         gemini_api_key: geminiApiKey,
-        local_model: localModel,
+        local_model: agentASelection.source === "ollama" ? agentASelection.model : null,
+        gemini_model: agentASelection.source === "gemini" ? agentASelection.model : null,
       };
       if (selectedQADoc) {
         payload.filename = selectedQADoc;
@@ -402,7 +661,11 @@ function App() {
               } else if (data.type === "text") {
                 accumulatedText += data.content;
               } else if (data.type === "model_name") {
-                setDynamicGeminiModel(data.content);
+                if (agentASelection.source === "gemini") {
+                  setGeminiModelAgentA((prev) => prev || data.content);
+                } else if (agentASelection.source === "ollama") {
+                  setLocalModelAgentA((prev) => prev || data.content);
+                }
               }
             } catch (err) {}
           }
@@ -583,9 +846,10 @@ function App() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            use_gemini: useGemini,
+            use_gemini: agentBSelection.source === "gemini",
             gemini_api_key: geminiApiKey,
-            local_model: localModel,
+            local_model: agentBSelection.source === "ollama" ? agentBSelection.model : null,
+            gemini_model: agentBSelection.source === "gemini" ? agentBSelection.model : null,
           }),
         }
       );
@@ -627,9 +891,10 @@ function App() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            use_gemini: useGemini,
+            use_gemini: agentBSelection.source === "gemini",
             gemini_api_key: geminiApiKey,
-            local_model: localModel,
+            local_model: agentBSelection.source === "ollama" ? agentBSelection.model : null,
+            gemini_model: agentBSelection.source === "gemini" ? agentBSelection.model : null,
           }),
         }
       );
@@ -1269,31 +1534,100 @@ function App() {
               <div
                 style={{
                   display: "flex",
-                  flexDirection: "column",
-                  gap: "16px",
-                  maxWidth: "500px",
+                  gap: "12px",
+                  alignItems: "flex-start",
+                  justifyContent: "flex-start",
+                  flexWrap: "wrap",
+                  rowGap: "20px",
                 }}
               >
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "12px",
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={useGemini}
-                    onChange={(e) => setUseGemini(e.target.checked)}
-                    style={{ width: "18px", height: "18px" }}
-                  />
-                  <span style={{ color: currentTheme.text, fontWeight: "600" }}>
-                    Folosește Google Gemini API în loc de modelul local (Ollama)
-                  </span>
-                </label>
+                <div style={{ flex: "0 0 calc(50% - 6px)", maxWidth: "calc(50% - 6px)" }}>
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px",
+                      cursor: "pointer",
+                      marginBottom: "12px",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={useGemini}
+                      onChange={(e) => setUseGemini(e.target.checked)}
+                      style={{ width: "18px", height: "18px" }}
+                    />
+                    <span style={{ color: currentTheme.text, fontWeight: "600" }}>
+                      Foloseste Google Gemini API
+                    </span>
+                  </label>
 
-                {useGemini && (
+                  {useGemini && (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "8px",
+                        marginBottom: "16px",
+                      }}
+                    >
+                      <label
+                        style={{
+                          color: currentTheme.textSecondary,
+                          fontSize: "0.9rem",
+                        }}
+                      >
+                        Gemini API Key
+                      </label>
+                      <input
+                        type="text"
+                        value={geminiApiKey}
+                        onChange={(e) => setGeminiApiKey(e.target.value)}
+                        placeholder="Introdu cheia ta Gemini API..."
+                        style={{
+                          padding: "12px 16px",
+                          borderRadius: "12px",
+                          border: `1px solid ${currentTheme.border}`,
+                          backgroundColor: currentTheme.cardBg,
+                          color: currentTheme.text,
+                          fontSize: "1rem",
+                        }}
+                      />
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: "0.85rem",
+                          color: currentTheme.textSecondary,
+                        }}
+                      >
+                        Cheia API este salvată local în browser și trimisă doar
+                        către backend-ul aplicației.
+                      </p>
+                      {geminiModelsLoading && (
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "0.85rem",
+                            color: currentTheme.textSecondary,
+                          }}
+                        >
+                          Se incarca modelele Gemini...
+                        </p>
+                      )}
+                      {geminiModelsError && (
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: "0.85rem",
+                            color: currentTheme.error,
+                          }}
+                        >
+                          {geminiModelsError}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   <div
                     style={{
                       display: "flex",
@@ -1307,22 +1641,163 @@ function App() {
                         fontSize: "0.9rem",
                       }}
                     >
-                      Gemini API Key
+                      Adauga model Ollama
                     </label>
-                    <input
-                      type="text"
-                      value={geminiApiKey}
-                      onChange={(e) => setGeminiApiKey(e.target.value)}
-                      placeholder="Introdu cheia ta Gemini API..."
-                      style={{
-                        padding: "12px 16px",
-                        borderRadius: "12px",
-                        border: `1px solid ${currentTheme.border}`,
-                        backgroundColor: currentTheme.cardBg,
-                        color: currentTheme.text,
-                        fontSize: "1rem",
-                      }}
-                    />
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <input
+                        type="text"
+                        value={ollamaModelToAdd}
+                        onChange={(e) => setOllamaModelToAdd(e.target.value)}
+                        placeholder="Ex: llama3.1:8b"
+                        style={{
+                          flex: 1,
+                          padding: "12px 16px",
+                          borderRadius: "12px",
+                          border: `1px solid ${currentTheme.border}`,
+                          backgroundColor: currentTheme.cardBg,
+                          color: currentTheme.text,
+                          fontSize: "1rem",
+                        }}
+                      />
+                      <button
+                        onClick={handlePullOllamaModel}
+                        disabled={ollamaPulling || !ollamaModelToAdd.trim()}
+                        style={{
+                          padding: "12px 16px",
+                          borderRadius: "12px",
+                          border: "none",
+                          backgroundColor: ollamaPulling
+                            ? currentTheme.buttonDisabled
+                            : currentTheme.primary,
+                          color: "#ffffff",
+                          cursor: ollamaPulling ? "not-allowed" : "pointer",
+                          fontWeight: "700",
+                        }}
+                      >
+                        Adauga
+                      </button>
+                      <button
+                        onClick={handleCancelOllamaPull}
+                        disabled={!ollamaPulling}
+                        style={{
+                          padding: "12px 16px",
+                          borderRadius: "12px",
+                          border: `1px solid ${currentTheme.border}`,
+                          backgroundColor: "transparent",
+                          color: currentTheme.text,
+                          cursor: ollamaPulling ? "pointer" : "not-allowed",
+                          fontWeight: "700",
+                        }}
+                      >
+                        Anuleaza
+                      </button>
+                    </div>
+                    {ollamaPullStatus && (
+                      <p
+                        style={{
+                          margin: 0,
+                          fontSize: "0.85rem",
+                          color: currentTheme.textSecondary,
+                        }}
+                      >
+                        {ollamaPullStatus}
+                      </p>
+                    )}
+                    {ollamaPullProgress !== null && (
+                      <div
+                        style={{
+                          height: "8px",
+                          borderRadius: "999px",
+                          backgroundColor: currentTheme.border,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${ollamaPullProgress}%`,
+                            height: "100%",
+                            backgroundColor: currentTheme.primary,
+                            transition: "width 0.2s ease",
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ flex: "0 0 calc(50% - 6px)", maxWidth: "calc(50% - 6px)" }}>
+                  <label
+                    style={{
+                      color: currentTheme.textSecondary,
+                      fontSize: "0.9rem",
+                      display: "block",
+                    }}
+                  >
+                    Model Agent A
+                  </label>
+                  <select
+                    value={agentAModelSelection}
+                    onChange={(e) => setAgentAModelSelection(e.target.value)}
+                    disabled={!ollamaModels.length && (!useGemini || !geminiModels.length)}
+                    style={{
+                      padding: "12px 16px",
+                      borderRadius: "12px",
+                      border: `1px solid ${currentTheme.border}`,
+                      backgroundColor: currentTheme.cardBg,
+                      color: currentTheme.text,
+                      fontSize: "1rem",
+                      width: "100%",
+                    }}
+                  >
+                    {ollamaModels.map((model) => (
+                      <option key={`ollama:${model}`} value={`ollama:${model}`}>
+                        {model}
+                      </option>
+                    ))}
+                    {useGemini &&
+                      geminiModels.map((model) => (
+                        <option key={`gemini:${model}`} value={`gemini:${model}`}>
+                          {getGeminiDisplayName(model)}
+                        </option>
+                      ))}
+                  </select>
+                  <label
+                    style={{
+                      color: currentTheme.textSecondary,
+                      fontSize: "0.9rem",
+                      display: "block",
+                      marginTop: "12px",
+                    }}
+                  >
+                    Model Agent B
+                  </label>
+                  <select
+                    value={agentBModelSelection}
+                    onChange={(e) => setAgentBModelSelection(e.target.value)}
+                    disabled={!ollamaModels.length && (!useGemini || !geminiModels.length)}
+                    style={{
+                      padding: "12px 16px",
+                      borderRadius: "12px",
+                      border: `1px solid ${currentTheme.border}`,
+                      backgroundColor: currentTheme.cardBg,
+                      color: currentTheme.text,
+                      fontSize: "1rem",
+                      width: "100%",
+                    }}
+                  >
+                    {ollamaModels.map((model) => (
+                      <option key={`ollama:${model}`} value={`ollama:${model}`}>
+                        {model}
+                      </option>
+                    ))}
+                    {useGemini &&
+                      geminiModels.map((model) => (
+                        <option key={`gemini:${model}`} value={`gemini:${model}`}>
+                          {getGeminiDisplayName(model)}
+                        </option>
+                      ))}
+                  </select>
+                  {ollamaModelsLoading && (
                     <p
                       style={{
                         margin: 0,
@@ -1330,45 +1805,21 @@ function App() {
                         color: currentTheme.textSecondary,
                       }}
                     >
-                      Cheia API este salvată local în browser și trimisă doar
-                      către backend-ul aplicației.
+                      Se incarca modelele Ollama...
                     </p>
-                  </div>
-                )}
-                {!useGemini && (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "8px",
-                    }}
-                  >
-                    <label
+                  )}
+                  {ollamaModelsError && (
+                    <p
                       style={{
-                        color: currentTheme.textSecondary,
-                        fontSize: "0.9rem",
+                        margin: 0,
+                        fontSize: "0.85rem",
+                        color: currentTheme.error,
                       }}
                     >
-                      Model local
-                    </label>
-                    <select
-                      value={localModel}
-                      onChange={(e) => setLocalModel(e.target.value)}
-                      style={{
-                        padding: "12px 16px",
-                        borderRadius: "12px",
-                        border: `1px solid ${currentTheme.border}`,
-                        backgroundColor: currentTheme.cardBg,
-                        color: currentTheme.text,
-                        fontSize: "1rem",
-                      }}
-                    >
-                      <option value="llama3">llama3</option>
-                      <option value="mistral">mistral</option>
-                      <option value="qwen2.5">qwen2.5</option>
-                    </select>
-                  </div>
-                )}
+                      {ollamaModelsError}
+                    </p>
+                  )}
+                </div>
               </div>
             </section>
           )}
@@ -1845,7 +2296,7 @@ function App() {
                     fontSize: "1.6rem",
                   }}
                 >
-                  Analiză & Examinare
+                  Analiză & Examinare cu {activeAgentBModelName}
                 </h2>
                 <p style={{ margin: 0, color: currentTheme.textSecondary }}>
                   Alege documentul pentru a genera un rezumat structurat sau
@@ -2286,11 +2737,11 @@ function App() {
                   fontSize: "1.6rem",
                 }}
               >
-                Q&A cu {activeChatModelName}
+                Q&A cu {activeAgentAModelName}
               </h2>
               <p style={{ margin: 0, color: currentTheme.textSecondary }}>
                 Adresează întrebări despre conținutul cursurilor tale.{" "}
-                {activeChatModelName} va răspunde folosind informațiile din
+                {activeAgentAModelName} va răspunde folosind informațiile din
                 documentele încărcate.
               </p>
             </div>
@@ -2386,7 +2837,7 @@ function App() {
                           marginBottom: "4px",
                         }}
                       >
-                        {msg.role === "user" ? "Tu" : activeChatModelName}
+                        {msg.role === "user" ? "Tu" : activeAgentAModelName}
                       </div>
                       {msg.status && !msg.content && (
                         <div

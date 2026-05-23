@@ -1,24 +1,23 @@
-import os
-import shutil
-import requests
-import secrets
 import hashlib
+import os
+import re
+import secrets
 import sqlite3
 import time
 import uuid
-import re
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, HTTPException, status, Header
-from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional
+
+import chromadb
+import ollama
+import requests
+from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pypdf import PdfReader
-import chromadb
-from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
-import ollama
 
 # Configurations
 MAX_FILE_SIZE_MB = 20
@@ -269,6 +268,7 @@ class ChatRequest(BaseModel):
     filename: Optional[str] = None
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
+    gemini_model: Optional[str] = None
     local_model: Optional[str] = None
 
 class QuizAttemptRequest(BaseModel):
@@ -373,6 +373,70 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 @app.get("/api/config")
 async def get_config():
     return {"chat_model": CHAT_MODEL, "generation_model": GENERATION_MODEL}
+
+class OllamaPullRequest(BaseModel):
+    name: str
+
+@app.get("/api/ollama/models")
+async def list_ollama_models(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    get_user_by_token(token)
+
+    try:
+        response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        if response.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Ollama error: {response.text}")
+        models_data = response.json().get("models", [])
+        models = [m.get("name") for m in models_data if m.get("name")]
+        return {"models": models}
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(status_code=503, detail="Ollama is not running.")
+
+@app.post("/api/ollama/pull")
+async def pull_ollama_model(payload: OllamaPullRequest, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    get_user_by_token(token)
+
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Model name is required.")
+
+    def generate():
+        import json
+        try:
+            with requests.post(
+                f"{OLLAMA_URL}/api/pull",
+                json={"name": payload.name.strip()},
+                stream=True,
+                timeout=60,
+            ) as resp:
+                if resp.status_code != 200:
+                    yield json.dumps({"type": "error", "message": resp.text}) + "\n"
+                    return
+
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line.decode("utf-8"))
+                        payload_out = {
+                            "type": "progress",
+                            "status": data.get("status"),
+                            "completed": data.get("completed"),
+                            "total": data.get("total"),
+                        }
+                        yield json.dumps(payload_out) + "\n"
+                    except Exception:
+                        continue
+
+                yield json.dumps({"type": "done"}) + "\n"
+        except requests.exceptions.ConnectionError:
+            yield json.dumps({"type": "error", "message": "Ollama is not running."}) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 @app.post("/api/signup")
 async def signup(payload: SignupRequest):
@@ -737,6 +801,7 @@ async def delete_document(filename: str, authorization: Optional[str] = Header(N
 class SummarizeRequest(BaseModel):
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
+    gemini_model: Optional[str] = None
     local_model: Optional[str] = None
 
 @app.post("/api/summarize/{filename}")
@@ -787,11 +852,15 @@ Plain text summary:"""
                 if not valid_models:
                     raise Exception("No generative models available for this API key.")
                     
-                chosen_model = valid_models[0]
-                flash_models = [m for m in valid_models if "flash" in m]
-                if flash_models:
-                    flash_models.sort(reverse=True)
-                    chosen_model = flash_models[0]
+                chosen_model = None
+                if payload.gemini_model and payload.gemini_model in valid_models:
+                    chosen_model = payload.gemini_model
+                if not chosen_model:
+                    chosen_model = valid_models[0]
+                    flash_models = [m for m in valid_models if "flash" in m]
+                    if flash_models:
+                        flash_models.sort(reverse=True)
+                        chosen_model = flash_models[0]
 
             gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:generateContent?key={payload.gemini_api_key}"
             gemini_payload = {
@@ -832,6 +901,7 @@ Plain text summary:"""
 class QuizRequest(BaseModel):
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
+    gemini_model: Optional[str] = None
     local_model: Optional[str] = None
 
 @app.post("/api/quiz/{filename}")
@@ -893,11 +963,15 @@ Text:
                 if not valid_models:
                     raise Exception("No generative models available for this API key.")
                     
-                chosen_model = valid_models[0]
-                flash_models = [m for m in valid_models if "flash" in m]
-                if flash_models:
-                    flash_models.sort(reverse=True)
-                    chosen_model = flash_models[0]
+                chosen_model = None
+                if payload.gemini_model and payload.gemini_model in valid_models:
+                    chosen_model = payload.gemini_model
+                if not chosen_model:
+                    chosen_model = valid_models[0]
+                    flash_models = [m for m in valid_models if "flash" in m]
+                    if flash_models:
+                        flash_models.sort(reverse=True)
+                        chosen_model = flash_models[0]
 
             gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:generateContent?key={payload.gemini_api_key}"
             gemini_payload = {
@@ -1030,13 +1104,17 @@ Since no course context is available, you must answer exactly: "Nu am găsit ace
                     models_data = models_resp.json().get("models", [])
                     valid_models = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
 
-                    chosen_model = valid_models[0]
-                    flash_models = [m for m in valid_models if "flash" in m]
-                    if flash_models:
-                        flash_models.sort(reverse=True)
-                        chosen_model = flash_models[0]
+                    chosen_model = None
+                    if request.gemini_model and request.gemini_model in valid_models:
+                        chosen_model = request.gemini_model
+                    if not chosen_model:
+                        chosen_model = valid_models[0]
+                        flash_models = [m for m in valid_models if "flash" in m]
+                        if flash_models:
+                            flash_models.sort(reverse=True)
+                            chosen_model = flash_models[0]
 
-                yield json.dumps({"type": "model_name", "content": chosen_model.split("/")[-1]}) + "\n"
+                yield json.dumps({"type": "model_name", "content": chosen_model}) + "\n"
                 await asyncio.sleep(0.1)
 
                 gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:streamGenerateContent?alt=sse&key={request.gemini_api_key}"
