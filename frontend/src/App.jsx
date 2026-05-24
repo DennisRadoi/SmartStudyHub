@@ -53,6 +53,55 @@ const theme = {
   },
 };
 
+// ─────────────────────────────────────────────
+// Reusable scope toggle: "📄 Document" | "📚 Curs"
+// ─────────────────────────────────────────────
+function ScopeToggle({ value, onChange, currentTheme }) {
+  const base = {
+    padding: "8px 18px",
+    borderRadius: "10px",
+    border: "none",
+    cursor: "pointer",
+    fontWeight: "700",
+    fontSize: "0.9rem",
+    transition: "all 0.15s ease",
+  };
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        borderRadius: "12px",
+        border: `1px solid ${currentTheme.border}`,
+        overflow: "hidden",
+        backgroundColor: currentTheme.surface,
+      }}
+    >
+      <button
+        onClick={() => onChange("document")}
+        style={{
+          ...base,
+          backgroundColor:
+            value === "document" ? currentTheme.primary : "transparent",
+          color: value === "document" ? "#fff" : currentTheme.textSecondary,
+        }}
+      >
+        📄 Document
+      </button>
+      <button
+        onClick={() => onChange("course")}
+        style={{
+          ...base,
+          backgroundColor:
+            value === "course" ? currentTheme.primary : "transparent",
+          color: value === "course" ? "#fff" : currentTheme.textSecondary,
+        }}
+      >
+        📚 Curs întreg
+      </button>
+    </div>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(
@@ -75,11 +124,34 @@ function App() {
   const [selectedCourse, setSelectedCourse] = useState("");
   const [newCourseTitle, setNewCourseTitle] = useState("");
   const [newCourseDescription, setNewCourseDescription] = useState("");
+
+  // Summary section
   const [selectedDoc, setSelectedDoc] = useState("");
+  const [summaryScopeMode, setSummaryScopeMode] = useState("document"); // 'document' | 'course'
+  const [selectedSummarizeCourse, setSelectedSummarizeCourse] = useState("");
   const [summarizing, setSummarizing] = useState(false);
   const [summary, setSummary] = useState("");
+  const [summaryLabel, setSummaryLabel] = useState("");
 
-  // FIXED: Protected JSON.parse
+  // Quiz section
+  const [quizScopeMode, setQuizScopeMode] = useState("document");
+  const [selectedQuizDoc, setSelectedQuizDoc] = useState("");
+  const [selectedQuizCourse, setSelectedQuizCourse] = useState("");
+  const [showQuiz, setShowQuiz] = useState(false);
+  const [quizGenerating, setQuizGenerating] = useState(false);
+  const [quizData, setQuizData] = useState(null);
+  const [quizAnswers, setQuizAnswers] = useState({});
+  const [quizSubmitted, setQuizSubmitted] = useState(false);
+  const [quizLabel, setQuizLabel] = useState("");
+
+  // Q&A section
+  const [qaScopeMode, setQAScopeMode] = useState("document");
+  const [selectedQADoc, setSelectedQADoc] = useState("");
+  const [selectedQACourse, setSelectedQACourse] = useState("");
+  const [chatMessage, setChatMessage] = useState("");
+  const [chatHistory, setChatHistory] = useState([]);
+  const [chatLoading, setChatLoading] = useState(false);
+
   const [darkMode, setDarkMode] = useState(() => {
     try {
       const saved = localStorage.getItem("smartStudyHub-darkMode");
@@ -92,10 +164,6 @@ function App() {
   const [showPDFViewer, setShowPDFViewer] = useState(false);
   const [currentPDFUrl, setCurrentPDFUrl] = useState("");
 
-  const [chatMessage, setChatMessage] = useState("");
-  const [chatHistory, setChatHistory] = useState([]);
-  const [chatLoading, setChatLoading] = useState(false);
-  const [selectedQADoc, setSelectedQADoc] = useState("");
   const [localModelAgentA, setLocalModelAgentA] = useState(() => {
     return localStorage.getItem("smartStudyHub-localModelAgentA") || "";
   });
@@ -127,13 +195,6 @@ function App() {
   });
   const chatEndRef = useRef(null);
 
-  const [showQuiz, setShowQuiz] = useState(false);
-  const [quizGenerating, setQuizGenerating] = useState(false);
-  const [quizData, setQuizData] = useState(null);
-  const [quizAnswers, setQuizAnswers] = useState({});
-  const [quizSubmitted, setQuizSubmitted] = useState(false);
-
-  // FIXED: Protected JSON.parse
   const [useGemini, setUseGemini] = useState(() => {
     try {
       const saved = localStorage.getItem("smartStudyHub-useGemini");
@@ -157,12 +218,10 @@ function App() {
   };
   const parseModelSelection = (value) => {
     if (!value) return { source: null, model: "" };
-    if (value.startsWith("gemini:")) {
+    if (value.startsWith("gemini:"))
       return { source: "gemini", model: value.slice("gemini:".length) };
-    }
-    if (value.startsWith("ollama:")) {
+    if (value.startsWith("ollama:"))
       return { source: "ollama", model: value.slice("ollama:".length) };
-    }
     return { source: null, model: value };
   };
   const agentASelection = parseModelSelection(agentAModelSelection);
@@ -194,6 +253,12 @@ function App() {
     }
   };
 
+  // Helper: get course title by id
+  const getCourseTitle = (courseId) => {
+    const c = courses.find((c) => c.id === courseId);
+    return c ? c.title : courseId;
+  };
+
   useEffect(() => {
     const fetchConfig = async () => {
       try {
@@ -201,7 +266,9 @@ function App() {
         if (response.ok) {
           const data = await response.json();
           setLocalModelAgentA((prev) => prev || data.chat_model || "llama3");
-          setLocalModelAgentB((prev) => prev || data.generation_model || "mistral");
+          setLocalModelAgentB(
+            (prev) => prev || data.generation_model || "mistral"
+          );
         }
       } catch (error) {
         console.error("Fetch config error", error);
@@ -218,28 +285,31 @@ function App() {
       const response = await fetch(`${API_BASE}/ollama/models`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) {
+      if (!response.ok)
         throw new Error("Nu s-au putut prelua modelele Ollama.");
-      }
       const data = await response.json();
       setOllamaModels(data.models || []);
     } catch (error) {
-      setOllamaModelsError(error.message || "Eroare la incarcarea modelelor Ollama.");
+      setOllamaModelsError(
+        error.message || "Eroare la incarcarea modelelor Ollama."
+      );
     } finally {
       setOllamaModelsLoading(false);
     }
   };
 
   useEffect(() => {
-    if (token) {
-      fetchOllamaModels();
-    }
+    if (token) fetchOllamaModels();
   }, [token]);
 
   useEffect(() => {
     if (!ollamaModels.length) return;
-    setLocalModelAgentA((prev) => (ollamaModels.includes(prev) ? prev : ollamaModels[0]));
-    setLocalModelAgentB((prev) => (ollamaModels.includes(prev) ? prev : ollamaModels[0]));
+    setLocalModelAgentA((prev) =>
+      ollamaModels.includes(prev) ? prev : ollamaModels[0]
+    );
+    setLocalModelAgentB((prev) =>
+      ollamaModels.includes(prev) ? prev : ollamaModels[0]
+    );
   }, [ollamaModels]);
 
   useEffect(() => {
@@ -248,9 +318,7 @@ function App() {
       ? geminiModels.map((model) => `gemini:${model}`)
       : [];
     const combinedOptions = [...ollamaOptions, ...geminiOptions];
-
     if (!combinedOptions.length) return;
-
     setAgentAModelSelection((prev) => {
       if (combinedOptions.includes(prev)) return prev;
       if (useGemini && geminiOptions.length) return geminiOptions[0];
@@ -269,10 +337,8 @@ function App() {
       setGeminiModelsError("");
       return;
     }
-
     const controller = new AbortController();
     let isActive = true;
-
     const fetchGeminiModels = async () => {
       setGeminiModelsLoading(true);
       setGeminiModelsError("");
@@ -281,32 +347,35 @@ function App() {
           `https://generativelanguage.googleapis.com/v1beta/models?key=${geminiApiKey}`,
           { signal: controller.signal }
         );
-        if (!response.ok) {
+        if (!response.ok)
           throw new Error("Nu s-au putut prelua modelele Gemini.");
-        }
         const data = await response.json();
         const models = (data.models || [])
           .filter((model) =>
             (model.supportedGenerationMethods || []).includes("generateContent")
           )
           .map((model) => model.name);
-
-        if (!models.length) {
-          throw new Error("Nu exista modele Gemini disponibile pentru acest key.");
-        }
-
+        if (!models.length)
+          throw new Error(
+            "Nu exista modele Gemini disponibile pentru acest key."
+          );
         if (!isActive) return;
         setGeminiModels(models);
-        setGeminiModelAgentA((prev) => (models.includes(prev) ? prev : models[0]));
-        setGeminiModelAgentB((prev) => (models.includes(prev) ? prev : models[0]));
+        setGeminiModelAgentA((prev) =>
+          models.includes(prev) ? prev : models[0]
+        );
+        setGeminiModelAgentB((prev) =>
+          models.includes(prev) ? prev : models[0]
+        );
       } catch (error) {
         if (!isActive || error.name === "AbortError") return;
-        setGeminiModelsError(error.message || "Eroare la incarcarea modelelor Gemini.");
+        setGeminiModelsError(
+          error.message || "Eroare la incarcarea modelelor Gemini."
+        );
       } finally {
         if (isActive) setGeminiModelsLoading(false);
       }
     };
-
     fetchGeminiModels();
     return () => {
       isActive = false;
@@ -315,9 +384,7 @@ function App() {
   }, [useGemini, geminiApiKey]);
 
   useEffect(() => {
-    if (token) {
-      fetchMe();
-    }
+    if (token) fetchMe();
   }, [token]);
 
   useEffect(() => {
@@ -346,6 +413,7 @@ function App() {
       console.error("Failed to load dashboard", error);
     }
   };
+
   const fetchCourses = async () => {
     try {
       const response = await fetch(`${API_BASE}/courses`, {
@@ -362,7 +430,6 @@ function App() {
 
   const handleCreateCourse = async () => {
     if (!newCourseTitle.trim()) return;
-
     try {
       const response = await fetch(`${API_BASE}/courses`, {
         method: "POST",
@@ -375,7 +442,6 @@ function App() {
           description: newCourseDescription,
         }),
       });
-
       if (response.ok) {
         setNewCourseTitle("");
         setNewCourseDescription("");
@@ -383,6 +449,32 @@ function App() {
       }
     } catch (err) {
       console.error("Create course error", err);
+    }
+  };
+
+  const handleDeleteCourse = async (courseId, courseTitle) => {
+    if (
+      !window.confirm(
+        `Ștergi cursul "${courseTitle}"? Documentele rămân, dar nu vor mai fi asociate cu cursul.`
+      )
+    )
+      return;
+    try {
+      const response = await fetch(`${API_BASE}/courses/${courseId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        if (selectedCourse === courseId) setSelectedCourse("");
+        if (selectedSummarizeCourse === courseId)
+          setSelectedSummarizeCourse("");
+        if (selectedQuizCourse === courseId) setSelectedQuizCourse("");
+        if (selectedQACourse === courseId) setSelectedQACourse("");
+        fetchCourses();
+        fetchDocuments();
+      }
+    } catch (err) {
+      console.error("Delete course error", err);
     }
   };
 
@@ -416,29 +508,31 @@ function App() {
   }, [geminiModelAgentA, geminiModelAgentB]);
 
   useEffect(() => {
-    localStorage.setItem("smartStudyHub-agentAModelSelection", agentAModelSelection);
-    localStorage.setItem("smartStudyHub-agentBModelSelection", agentBModelSelection);
+    localStorage.setItem(
+      "smartStudyHub-agentAModelSelection",
+      agentAModelSelection
+    );
+    localStorage.setItem(
+      "smartStudyHub-agentBModelSelection",
+      agentBModelSelection
+    );
   }, [agentAModelSelection, agentBModelSelection]);
 
   useEffect(() => {
-    if (agentASelection.source === "gemini") {
+    if (agentASelection.source === "gemini")
       setGeminiModelAgentA(agentASelection.model);
-    } else if (agentASelection.source === "ollama") {
+    else if (agentASelection.source === "ollama")
       setLocalModelAgentA(agentASelection.model);
-    }
   }, [agentASelection.source, agentASelection.model]);
 
   useEffect(() => {
-    if (agentBSelection.source === "gemini") {
+    if (agentBSelection.source === "gemini")
       setGeminiModelAgentB(agentBSelection.model);
-    } else if (agentBSelection.source === "ollama") {
+    else if (agentBSelection.source === "ollama")
       setLocalModelAgentB(agentBSelection.model);
-    }
   }, [agentBSelection.source, agentBSelection.model]);
 
-  const toggleDarkMode = () => {
-    setDarkMode((prev) => !prev);
-  };
+  const toggleDarkMode = () => setDarkMode((prev) => !prev);
 
   const fetchMe = async () => {
     try {
@@ -507,9 +601,8 @@ function App() {
 
   const handlePullOllamaModel = async () => {
     if (!ollamaModelToAdd.trim() || !token) return;
-    if (ollamaPullControllerRef.current) {
+    if (ollamaPullControllerRef.current)
       ollamaPullControllerRef.current.abort();
-    }
     const controller = new AbortController();
     ollamaPullControllerRef.current = controller;
     setOllamaPulling(true);
@@ -525,16 +618,12 @@ function App() {
         body: JSON.stringify({ name: ollamaModelToAdd.trim() }),
         signal: controller.signal,
       });
-
-      if (!response.ok || !response.body) {
+      if (!response.ok || !response.body)
         throw new Error("Nu s-a putut porni descarcarea modelului.");
-      }
-
       const reader = response.body.getReader();
       const decoder = new TextDecoder("utf-8");
       let buffer = "";
       let done = false;
-
       while (!done) {
         const { value, done: readerDone } = await reader.read();
         done = readerDone;
@@ -549,7 +638,8 @@ function App() {
               if (data.type === "progress") {
                 const completed = data.completed || 0;
                 const total = data.total || 0;
-                const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+                const percent =
+                  total > 0 ? Math.round((completed / total) * 100) : 0;
                 setOllamaPullProgress(percent);
                 setOllamaPullStatus(data.status || "Descarcare in progres...");
               } else if (data.type === "error") {
@@ -562,15 +652,12 @@ function App() {
           }
         }
       }
-
       await fetchOllamaModels();
       setOllamaModelToAdd("");
     } catch (error) {
-      if (error.name === "AbortError") {
+      if (error.name === "AbortError")
         setOllamaPullStatus("Descarcare anulata.");
-      } else {
-        setOllamaPullStatus(error.message || "Eroare la descarcare.");
-      }
+      else setOllamaPullStatus(error.message || "Eroare la descarcare.");
     } finally {
       setOllamaPulling(false);
       ollamaPullControllerRef.current = null;
@@ -582,11 +669,13 @@ function App() {
   };
 
   const handleCancelOllamaPull = () => {
-    if (ollamaPullControllerRef.current) {
+    if (ollamaPullControllerRef.current)
       ollamaPullControllerRef.current.abort();
-    }
   };
 
+  // ─────────────────────────────────────────────
+  // CHAT SUBMIT — supports course_id or filename
+  // ─────────────────────────────────────────────
   const handleChatSubmit = async (e) => {
     e.preventDefault();
     if (!chatMessage.trim()) return;
@@ -605,10 +694,16 @@ function App() {
         message: messageToSend,
         use_gemini: agentASelection.source === "gemini",
         gemini_api_key: geminiApiKey,
-        local_model: agentASelection.source === "ollama" ? agentASelection.model : null,
-        gemini_model: agentASelection.source === "gemini" ? agentASelection.model : null,
+        local_model:
+          agentASelection.source === "ollama" ? agentASelection.model : null,
+        gemini_model:
+          agentASelection.source === "gemini" ? agentASelection.model : null,
       };
-      if (selectedQADoc) {
+
+      // Attach scope: course or document
+      if (qaScopeMode === "course" && selectedQACourse) {
+        payload.course_id = selectedQACourse;
+      } else if (qaScopeMode === "document" && selectedQADoc) {
         payload.filename = selectedQADoc;
       }
 
@@ -649,27 +744,21 @@ function App() {
           accumulatedBuffer += decoder.decode(value, { stream: true });
           const lines = accumulatedBuffer.split("\n");
           accumulatedBuffer = lines.pop();
-
           let statusMsg = null;
-
           for (const line of lines) {
             if (!line.trim()) continue;
             try {
               const data = JSON.parse(line);
-              if (data.type === "status") {
-                statusMsg = data.content;
-              } else if (data.type === "text") {
-                accumulatedText += data.content;
-              } else if (data.type === "model_name") {
-                if (agentASelection.source === "gemini") {
+              if (data.type === "status") statusMsg = data.content;
+              else if (data.type === "text") accumulatedText += data.content;
+              else if (data.type === "model_name") {
+                if (agentASelection.source === "gemini")
                   setGeminiModelAgentA((prev) => prev || data.content);
-                } else if (agentASelection.source === "ollama") {
+                else if (agentASelection.source === "ollama")
                   setLocalModelAgentA((prev) => prev || data.content);
-                }
               }
             } catch (err) {}
           }
-
           setChatHistory((prev) => {
             const newHistory = [...prev];
             const lastMsg = newHistory[newHistory.length - 1];
@@ -677,9 +766,7 @@ function App() {
               if (accumulatedText) {
                 lastMsg.content = accumulatedText;
                 lastMsg.status = null;
-              } else if (statusMsg) {
-                lastMsg.status = statusMsg;
-              }
+              } else if (statusMsg) lastMsg.status = statusMsg;
             }
             return newHistory;
           });
@@ -689,9 +776,7 @@ function App() {
       setChatHistory((prev) => {
         const newHistory = [...prev];
         const lastMsg = newHistory[newHistory.length - 1];
-        if (lastMsg.role === "agent") {
-          lastMsg.isStreaming = false;
-        }
+        if (lastMsg.role === "agent") lastMsg.isStreaming = false;
         return newHistory;
       });
     } catch (err) {
@@ -716,7 +801,6 @@ function App() {
       )
     )
       return;
-
     try {
       const response = await fetch(
         `${API_BASE}/documents/${encodeURIComponent(filename)}`,
@@ -725,15 +809,14 @@ function App() {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
-
       if (response.ok) {
         if (selectedDoc === filename) {
           setSelectedDoc("");
           setSummary("");
         }
         if (selectedQADoc === filename) setSelectedQADoc("");
+        if (selectedQuizDoc === filename) setSelectedQuizDoc("");
         if (showPDFViewer && currentPDFUrl.includes(filename)) closePDFViewer();
-
         setMessage(`Documentul ${filename} a fost șters.`);
         await fetchDocuments();
         await fetchDashboard();
@@ -768,19 +851,16 @@ function App() {
       setFile(null);
       return;
     }
-
     if (!selectedFile.name.toLowerCase().endsWith(".pdf")) {
       setMessage("Only PDF files are allowed.");
       setFile(null);
       return;
     }
-
     if (selectedFile.size > 20 * 1024 * 1024) {
       setMessage("File exceeds the 20MB limit.");
       setFile(null);
       return;
     }
-
     setFile(selectedFile);
     setMessage("");
   };
@@ -789,22 +869,18 @@ function App() {
     if (!file) return;
     setUploading(true);
     setMessage("");
-
     const formData = new FormData();
     formData.append("file", file);
-
     try {
       const uploadUrl = selectedCourse
         ? `${API_BASE}/upload?course_id=${selectedCourse}`
         : `${API_BASE}/upload`;
-
       const response = await fetch(uploadUrl, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
       const data = await response.json();
-
       if (response.ok) {
         setMessage(data.message || "Document uploaded successfully.");
         setFile(null);
@@ -820,41 +896,52 @@ function App() {
     }
   };
 
-  const summarizeDocument = async (filename) => {
-    if (!filename) {
-      setMessage("Please select a document to summarize.");
+  // ─────────────────────────────────────────────
+  // SUMMARIZE — handles both single doc & course
+  // ─────────────────────────────────────────────
+  const summarizeDocument = async (filename, courseId = null) => {
+    const label = courseId
+      ? `cursul "${getCourseTitle(courseId)}"`
+      : `"${filename}"`;
+
+    if (!filename && !courseId) {
+      setMessage("Selectează un document sau curs pentru sumarizare.");
       return;
     }
+    if (
+      !window.confirm(
+        `Sumarizarea ${label} poate dura mai mult timp. Doriți să continuați?`
+      )
+    )
+      return;
 
-    const confirmContinue = window.confirm(
-      "Sumarizarea poate dura mai mult timp. Doriți să continuați?"
-    );
-    if (!confirmContinue) return;
-
-    setSelectedDoc(filename);
+    setSelectedDoc(filename || "");
+    setSummaryLabel(label);
     setSummary("");
     setSummarizing(true);
     setMessage("");
 
     try {
-      const response = await fetch(
-        `${API_BASE}/summarize/${encodeURIComponent(filename)}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            use_gemini: agentBSelection.source === "gemini",
-            gemini_api_key: geminiApiKey,
-            local_model: agentBSelection.source === "ollama" ? agentBSelection.model : null,
-            gemini_model: agentBSelection.source === "gemini" ? agentBSelection.model : null,
-          }),
-        }
-      );
-      const data = await response.json();
+      const endpoint = courseId
+        ? `${API_BASE}/summarize-course/${courseId}`
+        : `${API_BASE}/summarize/${encodeURIComponent(filename)}`;
 
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          use_gemini: agentBSelection.source === "gemini",
+          gemini_api_key: geminiApiKey,
+          local_model:
+            agentBSelection.source === "ollama" ? agentBSelection.model : null,
+          gemini_model:
+            agentBSelection.source === "gemini" ? agentBSelection.model : null,
+        }),
+      });
+      const data = await response.json();
       if (response.ok) {
         setSummary(data.summary);
       } else {
@@ -867,13 +954,21 @@ function App() {
     }
   };
 
-  const generateQuiz = async (filename) => {
-    if (!filename) {
-      setMessage("Please select a document to generate a quiz.");
+  // ─────────────────────────────────────────────
+  // QUIZ — handles both single doc & course
+  // ─────────────────────────────────────────────
+  const generateQuiz = async (filename, courseId = null) => {
+    const label = courseId
+      ? `cursul "${getCourseTitle(courseId)}"`
+      : `"${filename}"`;
+
+    if (!filename && !courseId) {
+      setMessage("Selectează un document sau curs pentru quiz.");
       return;
     }
 
-    setSelectedDoc(filename);
+    setSelectedDoc(filename || "");
+    setQuizLabel(label);
     setShowQuiz(true);
     setQuizData(null);
     setQuizAnswers({});
@@ -882,24 +977,26 @@ function App() {
     setMessage("");
 
     try {
-      const response = await fetch(
-        `${API_BASE}/quiz/${encodeURIComponent(filename)}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            use_gemini: agentBSelection.source === "gemini",
-            gemini_api_key: geminiApiKey,
-            local_model: agentBSelection.source === "ollama" ? agentBSelection.model : null,
-            gemini_model: agentBSelection.source === "gemini" ? agentBSelection.model : null,
-          }),
-        }
-      );
-      const data = await response.json();
+      const endpoint = courseId
+        ? `${API_BASE}/quiz-course/${courseId}`
+        : `${API_BASE}/quiz/${encodeURIComponent(filename)}`;
 
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          use_gemini: agentBSelection.source === "gemini",
+          gemini_api_key: geminiApiKey,
+          local_model:
+            agentBSelection.source === "ollama" ? agentBSelection.model : null,
+          gemini_model:
+            agentBSelection.source === "gemini" ? agentBSelection.model : null,
+        }),
+      });
+      const data = await response.json();
       if (response.ok) {
         setQuizData(data.quiz);
       } else {
@@ -914,10 +1011,7 @@ function App() {
 
   const handleQuizAnswer = (index, answer) => {
     if (quizSubmitted) return;
-    setQuizAnswers((prev) => ({
-      ...prev,
-      [index]: answer,
-    }));
+    setQuizAnswers((prev) => ({ ...prev, [index]: answer }));
   };
 
   const calculateQuizScore = () => {
@@ -937,25 +1031,25 @@ function App() {
     const score = calculateQuizScore();
     setQuizSubmitted(true);
 
-    try {
-      const response = await fetch(`${API_BASE}/quiz-attempts`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          filename: selectedDoc,
-          score,
-          total_questions: quizData.questions.length,
-        }),
-      });
-
-      if (response.ok) {
-        await fetchDashboard();
+    // Save attempt only if we have a single doc reference (course quizzes save by course label)
+    if (selectedDoc) {
+      try {
+        const response = await fetch(`${API_BASE}/quiz-attempts`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            filename: selectedDoc,
+            score,
+            total_questions: quizData.questions.length,
+          }),
+        });
+        if (response.ok) await fetchDashboard();
+      } catch (error) {
+        console.error("Failed to save quiz attempt", error);
       }
-    } catch (error) {
-      console.error("Failed to save quiz attempt", error);
     }
   };
 
@@ -975,7 +1069,7 @@ function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${selectedDoc || "summary"}.txt`;
+    link.download = `${summaryLabel || selectedDoc || "summary"}.txt`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -983,8 +1077,7 @@ function App() {
   };
 
   const openPDFViewer = (document) => {
-    const pdfUrl = `${API_BASE}/pdf/${document.filename}`;
-    setCurrentPDFUrl(pdfUrl);
+    setCurrentPDFUrl(`${API_BASE}/pdf/${document.filename}`);
     setShowPDFViewer(true);
   };
 
@@ -993,6 +1086,12 @@ function App() {
     setCurrentPDFUrl("");
   };
 
+  // ── Documents filtered per course for quick-action buttons ──────────
+  const docsByCourse = (courseId) =>
+    documents.filter((d) => d.course_id === courseId);
+  const docsWithoutCourse = documents.filter((d) => !d.course_id);
+
+  // ── Auth screen ──────────────────────────────────────────────────────
   if (!user) {
     return (
       <div
@@ -1036,102 +1135,63 @@ function App() {
               Studiază mai inteligent, nu mai greu
             </p>
           </div>
-
           <div style={{ marginBottom: "24px", textAlign: "center" }}>
-            <button
-              onClick={() => setAuthMode("login")}
-              style={{
-                padding: "12px 24px",
-                borderRadius: "12px",
-                border:
-                  authMode === "login"
-                    ? `2px solid ${currentTheme.primary}`
-                    : `1px solid ${currentTheme.border}`,
-                backgroundColor:
-                  authMode === "login"
-                    ? currentTheme.primary
-                    : currentTheme.surface,
-                color: authMode === "login" ? "#ffffff" : currentTheme.text,
-                cursor: "pointer",
-                fontWeight: "700",
-                marginRight: "12px",
-              }}
-            >
-              Login
-            </button>
-            <button
-              onClick={() => setAuthMode("signup")}
-              style={{
-                padding: "12px 24px",
-                borderRadius: "12px",
-                border:
-                  authMode === "signup"
-                    ? `2px solid ${currentTheme.primary}`
-                    : `1px solid ${currentTheme.border}`,
-                backgroundColor:
-                  authMode === "signup"
-                    ? currentTheme.primary
-                    : currentTheme.surface,
-                color: authMode === "signup" ? "#ffffff" : currentTheme.text,
-                cursor: "pointer",
-                fontWeight: "700",
-              }}
-            >
-              Sign Up
-            </button>
+            {["login", "signup"].map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setAuthMode(mode)}
+                style={{
+                  padding: "12px 24px",
+                  borderRadius: "12px",
+                  border:
+                    authMode === mode
+                      ? `2px solid ${currentTheme.primary}`
+                      : `1px solid ${currentTheme.border}`,
+                  backgroundColor:
+                    authMode === mode
+                      ? currentTheme.primary
+                      : currentTheme.surface,
+                  color: authMode === mode ? "#ffffff" : currentTheme.text,
+                  cursor: "pointer",
+                  fontWeight: "700",
+                  marginRight: mode === "login" ? "12px" : 0,
+                }}
+              >
+                {mode === "login" ? "Login" : "Sign Up"}
+              </button>
+            ))}
           </div>
-
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              const formData = new FormData(e.target);
-              const data = Object.fromEntries(formData.entries());
+              const data = Object.fromEntries(new FormData(e.target).entries());
               handleAuth(data);
             }}
           >
             <div style={{ display: "grid", gap: "16px" }}>
-              <input
-                name="username"
-                type="text"
-                placeholder="Username"
-                required
-                style={{
-                  padding: "14px 16px",
-                  borderRadius: "12px",
-                  border: `1px solid ${currentTheme.border}`,
-                  backgroundColor: currentTheme.cardBg,
-                  color: currentTheme.text,
-                  fontSize: "1rem",
-                }}
-              />
-              <input
-                name="email"
-                type="email"
-                placeholder="Email"
-                required
-                style={{
-                  padding: "14px 16px",
-                  borderRadius: "12px",
-                  border: `1px solid ${currentTheme.border}`,
-                  backgroundColor: currentTheme.cardBg,
-                  color: currentTheme.text,
-                  fontSize: "1rem",
-                }}
-              />
-              <input
-                name="password"
-                type="password"
-                placeholder="Password"
-                required
-                style={{
-                  padding: "14px 16px",
-                  borderRadius: "12px",
-                  border: `1px solid ${currentTheme.border}`,
-                  backgroundColor: currentTheme.cardBg,
-                  color: currentTheme.text,
-                  fontSize: "1rem",
-                }}
-              />
+              {["username", "email", "password"].map((field) => (
+                <input
+                  key={field}
+                  name={field}
+                  type={
+                    field === "password"
+                      ? "password"
+                      : field === "email"
+                      ? "email"
+                      : "text"
+                  }
+                  placeholder={field.charAt(0).toUpperCase() + field.slice(1)}
+                  required
+                  style={{
+                    padding: "14px 16px",
+                    borderRadius: "12px",
+                    border: `1px solid ${currentTheme.border}`,
+                    backgroundColor: currentTheme.cardBg,
+                    color: currentTheme.text,
+                    fontSize: "1rem",
+                  }}
+                />
+              ))}
               {authMode === "signup" && (
                 <input
                   name="developer_code"
@@ -1171,7 +1231,6 @@ function App() {
               </button>
             </div>
           </form>
-
           {authError && (
             <div
               style={{
@@ -1186,7 +1245,6 @@ function App() {
               {authError}
             </div>
           )}
-
           <div style={{ marginTop: "24px", textAlign: "center" }}>
             <button
               onClick={toggleDarkMode}
@@ -1207,6 +1265,7 @@ function App() {
     );
   }
 
+  // ── Main app ─────────────────────────────────────────────────────────
   return (
     <div
       style={{
@@ -1220,7 +1279,7 @@ function App() {
     >
       <style>{shimmerStyles}</style>
 
-      {/* Sidebar for Chat History */}
+      {/* Chat-history sidebar */}
       <div
         style={{
           width: sidebarOpen ? "320px" : "0px",
@@ -1256,7 +1315,7 @@ function App() {
               }}
             >
               <h2 style={{ fontSize: "1.2rem", margin: 0, fontWeight: "600" }}>
-                Istoric Q&A
+                Istoric Q&amp;A
               </h2>
               <button
                 onClick={() => setSidebarOpen(false)}
@@ -1271,7 +1330,6 @@ function App() {
                 ✕
               </button>
             </div>
-
             {loadingHistory ? (
               <p style={{ color: currentTheme.textSecondary }}>
                 Se încarcă istoricul...
@@ -1346,22 +1404,20 @@ function App() {
           margin: "0 auto",
           color: currentTheme.text,
           backgroundColor: currentTheme.background,
-          fontFamily:
-            '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
           display: "flex",
           gap: showPDFViewer ? "24px" : "0",
           boxSizing: "border-box",
         }}
       >
-        {/* Main Content */}
+        {/* Main content */}
         <div
           style={{
-            flex: showPDFViewer ? "1" : "1",
+            flex: 1,
             width: showPDFViewer ? "50%" : "100%",
             transition: "all 0.3s ease",
           }}
         >
-          {" "}
+          {/* ── Header ── */}
           <header
             style={{
               marginBottom: "34px",
@@ -1428,12 +1484,9 @@ function App() {
                 }}
               >
                 Încarcă PDF-uri, generează rezumate structurate și exportă
-                notițele direct din browser. Interfața este optimizată pentru
-                citire clară și productivitate.
+                notițele direct din browser.
               </p>
             </div>
-
-            {/* User greeting and logout */}
             <div
               style={{
                 display: "flex",
@@ -1463,7 +1516,6 @@ function App() {
                   cursor: "pointer",
                   fontSize: "0.9rem",
                   fontWeight: "600",
-                  transition: "all 0.2s ease",
                 }}
                 onMouseOver={(e) => {
                   e.target.style.backgroundColor = currentTheme.error;
@@ -1477,7 +1529,6 @@ function App() {
                 Logout
               </button>
             </div>
-
             <div style={{ display: "flex", gap: "12px" }}>
               <button
                 onClick={() => setShowSettings(!showSettings)}
@@ -1509,6 +1560,8 @@ function App() {
               </button>
             </div>
           </header>
+
+          {/* ── Settings panel ── */}
           {showSettings && (
             <section
               style={{
@@ -1517,9 +1570,6 @@ function App() {
                 borderRadius: "24px",
                 backgroundColor: currentTheme.surface,
                 border: `1px solid ${currentTheme.border}`,
-                boxShadow: darkMode
-                  ? "0 10px 30px rgba(0,0,0,0.1)"
-                  : "0 10px 30px rgba(15, 23, 42, 0.05)",
               }}
             >
               <h2
@@ -1536,12 +1586,16 @@ function App() {
                   display: "flex",
                   gap: "12px",
                   alignItems: "flex-start",
-                  justifyContent: "flex-start",
                   flexWrap: "wrap",
                   rowGap: "20px",
                 }}
               >
-                <div style={{ flex: "0 0 calc(50% - 6px)", maxWidth: "calc(50% - 6px)" }}>
+                <div
+                  style={{
+                    flex: "0 0 calc(50% - 6px)",
+                    maxWidth: "calc(50% - 6px)",
+                  }}
+                >
                   <label
                     style={{
                       display: "flex",
@@ -1557,11 +1611,12 @@ function App() {
                       onChange={(e) => setUseGemini(e.target.checked)}
                       style={{ width: "18px", height: "18px" }}
                     />
-                    <span style={{ color: currentTheme.text, fontWeight: "600" }}>
+                    <span
+                      style={{ color: currentTheme.text, fontWeight: "600" }}
+                    >
                       Foloseste Google Gemini API
                     </span>
                   </label>
-
                   {useGemini && (
                     <div
                       style={{
@@ -1593,16 +1648,6 @@ function App() {
                           fontSize: "1rem",
                         }}
                       />
-                      <p
-                        style={{
-                          margin: 0,
-                          fontSize: "0.85rem",
-                          color: currentTheme.textSecondary,
-                        }}
-                      >
-                        Cheia API este salvată local în browser și trimisă doar
-                        către backend-ul aplicației.
-                      </p>
                       {geminiModelsLoading && (
                         <p
                           style={{
@@ -1627,7 +1672,6 @@ function App() {
                       )}
                     </div>
                   )}
-
                   <div
                     style={{
                       display: "flex",
@@ -1724,79 +1768,72 @@ function App() {
                     )}
                   </div>
                 </div>
-
-                <div style={{ flex: "0 0 calc(50% - 6px)", maxWidth: "calc(50% - 6px)" }}>
-                  <label
-                    style={{
-                      color: currentTheme.textSecondary,
-                      fontSize: "0.9rem",
-                      display: "block",
-                    }}
-                  >
-                    Model Agent A
-                  </label>
-                  <select
-                    value={agentAModelSelection}
-                    onChange={(e) => setAgentAModelSelection(e.target.value)}
-                    disabled={!ollamaModels.length && (!useGemini || !geminiModels.length)}
-                    style={{
-                      padding: "12px 16px",
-                      borderRadius: "12px",
-                      border: `1px solid ${currentTheme.border}`,
-                      backgroundColor: currentTheme.cardBg,
-                      color: currentTheme.text,
-                      fontSize: "1rem",
-                      width: "100%",
-                    }}
-                  >
-                    {ollamaModels.map((model) => (
-                      <option key={`ollama:${model}`} value={`ollama:${model}`}>
-                        {model}
-                      </option>
-                    ))}
-                    {useGemini &&
-                      geminiModels.map((model) => (
-                        <option key={`gemini:${model}`} value={`gemini:${model}`}>
-                          {getGeminiDisplayName(model)}
-                        </option>
-                      ))}
-                  </select>
-                  <label
-                    style={{
-                      color: currentTheme.textSecondary,
-                      fontSize: "0.9rem",
-                      display: "block",
-                      marginTop: "12px",
-                    }}
-                  >
-                    Model Agent B
-                  </label>
-                  <select
-                    value={agentBModelSelection}
-                    onChange={(e) => setAgentBModelSelection(e.target.value)}
-                    disabled={!ollamaModels.length && (!useGemini || !geminiModels.length)}
-                    style={{
-                      padding: "12px 16px",
-                      borderRadius: "12px",
-                      border: `1px solid ${currentTheme.border}`,
-                      backgroundColor: currentTheme.cardBg,
-                      color: currentTheme.text,
-                      fontSize: "1rem",
-                      width: "100%",
-                    }}
-                  >
-                    {ollamaModels.map((model) => (
-                      <option key={`ollama:${model}`} value={`ollama:${model}`}>
-                        {model}
-                      </option>
-                    ))}
-                    {useGemini &&
-                      geminiModels.map((model) => (
-                        <option key={`gemini:${model}`} value={`gemini:${model}`}>
-                          {getGeminiDisplayName(model)}
-                        </option>
-                      ))}
-                  </select>
+                <div
+                  style={{
+                    flex: "0 0 calc(50% - 6px)",
+                    maxWidth: "calc(50% - 6px)",
+                  }}
+                >
+                  {[
+                    [
+                      "Model Agent A",
+                      agentAModelSelection,
+                      setAgentAModelSelection,
+                    ],
+                    [
+                      "Model Agent B",
+                      agentBModelSelection,
+                      setAgentBModelSelection,
+                    ],
+                  ].map(([label, val, setter], i) => (
+                    <div key={i}>
+                      <label
+                        style={{
+                          color: currentTheme.textSecondary,
+                          fontSize: "0.9rem",
+                          display: "block",
+                          marginTop: i > 0 ? "12px" : 0,
+                        }}
+                      >
+                        {label}
+                      </label>
+                      <select
+                        value={val}
+                        onChange={(e) => setter(e.target.value)}
+                        disabled={
+                          !ollamaModels.length &&
+                          (!useGemini || !geminiModels.length)
+                        }
+                        style={{
+                          padding: "12px 16px",
+                          borderRadius: "12px",
+                          border: `1px solid ${currentTheme.border}`,
+                          backgroundColor: currentTheme.cardBg,
+                          color: currentTheme.text,
+                          fontSize: "1rem",
+                          width: "100%",
+                        }}
+                      >
+                        {ollamaModels.map((model) => (
+                          <option
+                            key={`ollama:${model}`}
+                            value={`ollama:${model}`}
+                          >
+                            {model}
+                          </option>
+                        ))}
+                        {useGemini &&
+                          geminiModels.map((model) => (
+                            <option
+                              key={`gemini:${model}`}
+                              value={`gemini:${model}`}
+                            >
+                              {getGeminiDisplayName(model)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  ))}
                   {ollamaModelsLoading && (
                     <p
                       style={{
@@ -1823,6 +1860,8 @@ function App() {
               </div>
             </section>
           )}
+
+          {/* ── Dashboard stats ── */}
           <section
             style={{
               display: "grid",
@@ -1831,78 +1870,63 @@ function App() {
               marginBottom: "28px",
             }}
           >
-            <article
-              style={{
-                padding: "22px",
-                borderRadius: "16px",
-                backgroundColor: currentTheme.surface,
-                border: `1px solid ${currentTheme.border}`,
-              }}
-            >
-              <p
-                style={{
-                  margin: "0 0 10px",
-                  color: currentTheme.textSecondary,
-                  fontSize: "0.95rem",
-                  fontWeight: "700",
-                }}
-              >
-                Fișiere studiate
-              </p>
-              <div
-                style={{
-                  color: currentTheme.text,
-                  fontSize: "2.2rem",
-                  lineHeight: 1,
-                  fontWeight: "800",
-                }}
-              >
-                {dashboardStats.studied_files}
-              </div>
-            </article>
-
-            <article
-              style={{
-                padding: "22px",
-                borderRadius: "16px",
-                backgroundColor: currentTheme.surface,
-                border: `1px solid ${currentTheme.border}`,
-              }}
-            >
-              <p
-                style={{
-                  margin: "0 0 10px",
-                  color: currentTheme.textSecondary,
-                  fontSize: "0.95rem",
-                  fontWeight: "700",
-                }}
-              >
-                Scor mediu quiz-uri
-              </p>
-              <div
-                style={{
-                  color: currentTheme.text,
-                  fontSize: "2.2rem",
-                  lineHeight: 1,
-                  fontWeight: "800",
-                }}
-              >
-                {dashboardStats.quiz_attempts > 0
+            {[
+              ["Fișiere studiate", dashboardStats.studied_files, null],
+              [
+                "Scor mediu quiz-uri",
+                dashboardStats.quiz_attempts > 0
                   ? `${dashboardStats.average_quiz_score}%`
-                  : "N/A"}
-              </div>
-              <p
+                  : "N/A",
+                `${dashboardStats.quiz_attempts} quiz${
+                  dashboardStats.quiz_attempts === 1 ? "" : "-uri"
+                } finalizate`,
+              ],
+            ].map(([label, val, sub], i) => (
+              <article
+                key={i}
                 style={{
-                  margin: "10px 0 0",
-                  color: currentTheme.textSecondary,
-                  fontSize: "0.9rem",
+                  padding: "22px",
+                  borderRadius: "16px",
+                  backgroundColor: currentTheme.surface,
+                  border: `1px solid ${currentTheme.border}`,
                 }}
               >
-                {dashboardStats.quiz_attempts} quiz
-                {dashboardStats.quiz_attempts === 1 ? "" : "-uri"} finalizate
-              </p>
-            </article>
+                <p
+                  style={{
+                    margin: "0 0 10px",
+                    color: currentTheme.textSecondary,
+                    fontSize: "0.95rem",
+                    fontWeight: "700",
+                  }}
+                >
+                  {label}
+                </p>
+                <div
+                  style={{
+                    color: currentTheme.text,
+                    fontSize: "2.2rem",
+                    lineHeight: 1,
+                    fontWeight: "800",
+                  }}
+                >
+                  {val}
+                </div>
+                {sub && (
+                  <p
+                    style={{
+                      margin: "10px 0 0",
+                      color: currentTheme.textSecondary,
+                      fontSize: "0.9rem",
+                    }}
+                  >
+                    {sub}
+                  </p>
+                )}
+              </article>
+            ))}
           </section>
+
+          {/* ── Courses management ── */}
           <section
             style={{
               display: "flex",
@@ -1919,17 +1943,37 @@ function App() {
                 border: `1px solid ${currentTheme.border}`,
               }}
             >
-              <h2 style={{ marginBottom: "16px" }}>Cursuri</h2>
+              <h2 style={{ marginBottom: "16px", margin: "0 0 16px" }}>
+                📚 Cursurile mele
+              </h2>
+              <p
+                style={{
+                  margin: "0 0 16px",
+                  color: currentTheme.textSecondary,
+                  fontSize: "0.95rem",
+                }}
+              >
+                Creează cursuri pentru a organiza PDF-urile pe materii. Poți
+                analiza sau chestiona întregul curs dintr-o dată.
+              </p>
 
+              {/* Create course form */}
               <div
-                style={{ display: "flex", gap: "12px", marginBottom: "16px" }}
+                style={{
+                  display: "flex",
+                  gap: "12px",
+                  marginBottom: "20px",
+                  flexWrap: "wrap",
+                }}
               >
                 <input
-                  placeholder="Titlu curs"
+                  placeholder="Titlu curs (ex: MDS, BD, SO)"
                   value={newCourseTitle}
                   onChange={(e) => setNewCourseTitle(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleCreateCourse()}
                   style={{
                     flex: 1,
+                    minWidth: "160px",
                     padding: "12px",
                     borderRadius: "12px",
                     border: `1px solid ${currentTheme.border}`,
@@ -1938,11 +1982,12 @@ function App() {
                   }}
                 />
                 <input
-                  placeholder="Descriere"
+                  placeholder="Descriere (opțional)"
                   value={newCourseDescription}
                   onChange={(e) => setNewCourseDescription(e.target.value)}
                   style={{
-                    flex: 1,
+                    flex: 2,
+                    minWidth: "200px",
                     padding: "12px",
                     borderRadius: "12px",
                     border: `1px solid ${currentTheme.border}`,
@@ -1952,44 +1997,202 @@ function App() {
                 />
                 <button
                   onClick={handleCreateCourse}
+                  disabled={!newCourseTitle.trim()}
                   style={{
-                    padding: "12px 16px",
+                    padding: "12px 20px",
                     borderRadius: "12px",
                     border: "none",
-                    backgroundColor: currentTheme.primary,
+                    backgroundColor: newCourseTitle.trim()
+                      ? currentTheme.primary
+                      : currentTheme.buttonDisabled,
                     color: "#fff",
                     fontWeight: "700",
-                    cursor: "pointer",
+                    cursor: newCourseTitle.trim() ? "pointer" : "not-allowed",
                   }}
                 >
-                  Creează
+                  + Creează curs
                 </button>
               </div>
 
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                {courses.map((c) => (
-                  <div
-                    key={c.id}
-                    style={{
-                      padding: "8px 12px",
-                      borderRadius: "10px",
-                      border: `1px solid ${currentTheme.border}`,
-                      backgroundColor:
-                        selectedCourse === c.id
-                          ? currentTheme.primary
-                          : currentTheme.cardBg,
-                      color:
-                        selectedCourse === c.id ? "#fff" : currentTheme.text,
-                      cursor: "pointer",
-                    }}
-                    onClick={() => setSelectedCourse(c.id)}
-                  >
-                    {c.title}
-                  </div>
-                ))}
-              </div>
+              {/* Course cards */}
+              {courses.length === 0 ? (
+                <p
+                  style={{
+                    color: currentTheme.textSecondary,
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  Nu ai cursuri. Creează primul curs pentru a organiza
+                  documentele.
+                </p>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "12px",
+                  }}
+                >
+                  {courses.map((c) => {
+                    const courseDocs = docsByCourse(c.id);
+                    return (
+                      <div
+                        key={c.id}
+                        style={{
+                          borderRadius: "16px",
+                          border: `1px solid ${
+                            selectedCourse === c.id
+                              ? currentTheme.primary
+                              : currentTheme.border
+                          }`,
+                          backgroundColor:
+                            selectedCourse === c.id
+                              ? darkMode
+                                ? "#112d4a"
+                                : "#e7f5ff"
+                              : currentTheme.cardBg,
+                          padding: "16px 20px",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "flex-start",
+                            flexWrap: "wrap",
+                            gap: "8px",
+                          }}
+                        >
+                          <div style={{ flex: 1 }}>
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "10px",
+                                marginBottom: "4px",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontWeight: "700",
+                                  fontSize: "1.05rem",
+                                  color: currentTheme.text,
+                                }}
+                              >
+                                📘 {c.title}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: "0.8rem",
+                                  color: currentTheme.textSecondary,
+                                  backgroundColor: currentTheme.surface,
+                                  padding: "2px 8px",
+                                  borderRadius: "999px",
+                                  border: `1px solid ${currentTheme.border}`,
+                                }}
+                              >
+                                {courseDocs.length} fișier
+                                {courseDocs.length !== 1 ? "e" : ""}
+                              </span>
+                            </div>
+                            {c.description && (
+                              <p
+                                style={{
+                                  margin: 0,
+                                  color: currentTheme.textSecondary,
+                                  fontSize: "0.9rem",
+                                }}
+                              >
+                                {c.description}
+                              </p>
+                            )}
+                            {/* Files in this course */}
+                            {courseDocs.length > 0 && (
+                              <div
+                                style={{
+                                  marginTop: "8px",
+                                  display: "flex",
+                                  flexWrap: "wrap",
+                                  gap: "6px",
+                                }}
+                              >
+                                {courseDocs.map((d) => (
+                                  <span
+                                    key={d.filename}
+                                    style={{
+                                      fontSize: "0.8rem",
+                                      padding: "3px 10px",
+                                      borderRadius: "8px",
+                                      backgroundColor: currentTheme.surface,
+                                      border: `1px solid ${currentTheme.border}`,
+                                      color: currentTheme.textSecondary,
+                                    }}
+                                  >
+                                    📄 {d.filename}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: "8px",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <button
+                              onClick={() =>
+                                setSelectedCourse(
+                                  selectedCourse === c.id ? "" : c.id
+                                )
+                              }
+                              style={{
+                                padding: "7px 14px",
+                                borderRadius: "8px",
+                                border: `1px solid ${currentTheme.primary}`,
+                                backgroundColor:
+                                  selectedCourse === c.id
+                                    ? currentTheme.primary
+                                    : "transparent",
+                                color:
+                                  selectedCourse === c.id
+                                    ? "#fff"
+                                    : currentTheme.primary,
+                                cursor: "pointer",
+                                fontWeight: "600",
+                                fontSize: "0.85rem",
+                              }}
+                            >
+                              {selectedCourse === c.id
+                                ? "✓ Selectat"
+                                : "Selectează"}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCourse(c.id, c.title)}
+                              style={{
+                                padding: "7px 14px",
+                                borderRadius: "8px",
+                                border: `1px solid ${currentTheme.error}`,
+                                backgroundColor: "transparent",
+                                color: currentTheme.error,
+                                cursor: "pointer",
+                                fontWeight: "600",
+                                fontSize: "0.85rem",
+                              }}
+                            >
+                              Șterge
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </article>
 
+            {/* ── Upload section ── */}
             <article
               style={{
                 borderRadius: "24px",
@@ -2010,26 +2213,50 @@ function App() {
               >
                 Încarcă document
               </h2>
-              <select
-                value={selectedCourse}
-                onChange={(e) => setSelectedCourse(e.target.value)}
-                style={{
-                  padding: "12px 16px",
-                  borderRadius: "12px",
-                  border: `1px solid ${currentTheme.border}`,
-                  backgroundColor: currentTheme.cardBg,
-                  color: currentTheme.text,
-                  fontSize: "1rem",
-                  marginBottom: "16px",
-                }}
-              >
-                <option value="">Fără curs</option>
-                {courses.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-              </select>
+              <div style={{ marginBottom: "16px" }}>
+                <label
+                  style={{
+                    color: currentTheme.textSecondary,
+                    fontSize: "0.9rem",
+                    display: "block",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Asociază cu un curs (opțional)
+                </label>
+                <select
+                  value={selectedCourse}
+                  onChange={(e) => setSelectedCourse(e.target.value)}
+                  style={{
+                    padding: "12px 16px",
+                    borderRadius: "12px",
+                    border: `1px solid ${currentTheme.border}`,
+                    backgroundColor: currentTheme.cardBg,
+                    color: currentTheme.text,
+                    fontSize: "1rem",
+                    minWidth: "220px",
+                  }}
+                >
+                  <option value="">Fără curs</option>
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.title}
+                    </option>
+                  ))}
+                </select>
+                {selectedCourse && (
+                  <span
+                    style={{
+                      marginLeft: "12px",
+                      fontSize: "0.9rem",
+                      color: currentTheme.primary,
+                      fontWeight: "600",
+                    }}
+                  >
+                    → {getCourseTitle(selectedCourse)}
+                  </span>
+                )}
+              </div>
               <p
                 style={{
                   margin: "0 0 24px",
@@ -2039,24 +2266,21 @@ function App() {
                 PDF-uri de maxim 20MB. Vom extrage textul și le vom stoca pentru
                 a genera rezumate rapide.
               </p>
-
               <div style={{ display: "grid", gap: "16px" }}>
-                <label style={{ display: "block", width: "100%" }}>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    onChange={handleFileChange}
-                    style={{
-                      width: "100%",
-                      padding: "14px 16px",
-                      borderRadius: "16px",
-                      border: `1px solid ${currentTheme.border}`,
-                      backgroundColor: currentTheme.cardBg,
-                      color: currentTheme.text,
-                      fontSize: "0.95rem",
-                    }}
-                  />
-                </label>
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={handleFileChange}
+                  style={{
+                    width: "100%",
+                    padding: "14px 16px",
+                    borderRadius: "16px",
+                    border: `1px solid ${currentTheme.border}`,
+                    backgroundColor: currentTheme.cardBg,
+                    color: currentTheme.text,
+                    fontSize: "0.95rem",
+                  }}
+                />
                 <button
                   onClick={handleUpload}
                   disabled={!file || uploading}
@@ -2077,7 +2301,6 @@ function App() {
                   {uploading ? "Încarcare..." : "Încarcă PDF"}
                 </button>
               </div>
-
               {message && (
                 <div
                   style={{
@@ -2093,6 +2316,7 @@ function App() {
               )}
             </article>
 
+            {/* ── Documents list ── */}
             <article
               style={{
                 borderRadius: "24px",
@@ -2111,6 +2335,7 @@ function App() {
                   alignItems: "center",
                   gap: "12px",
                   flexWrap: "wrap",
+                  marginBottom: "20px",
                 }}
               >
                 <div>
@@ -2138,12 +2363,7 @@ function App() {
               </div>
 
               {documents.length === 0 ? (
-                <p
-                  style={{
-                    marginTop: "22px",
-                    color: currentTheme.textSecondary,
-                  }}
-                >
+                <p style={{ color: currentTheme.textSecondary }}>
                   Nu ai încă documente. Încarcă primul PDF pentru a începe.
                 </p>
               ) : (
@@ -2151,13 +2371,15 @@ function App() {
                   style={{
                     listStyle: "none",
                     padding: 0,
-                    margin: "22px 0 0",
+                    margin: 0,
                     display: "grid",
-                    gap: "16px",
+                    gap: "12px",
                   }}
                 >
                   {documents.map((doc, index) => {
-                    const active = doc.filename === selectedDoc;
+                    const courseName = doc.course_id
+                      ? getCourseTitle(doc.course_id)
+                      : null;
                     return (
                       <li
                         key={index}
@@ -2166,16 +2388,10 @@ function App() {
                           gridTemplateColumns: "1fr auto",
                           gap: "16px",
                           alignItems: "center",
-                          padding: "18px",
-                          borderRadius: "18px",
-                          backgroundColor: active
-                            ? darkMode
-                              ? "#112d4a"
-                              : "#e7f5ff"
-                            : currentTheme.cardBg,
-                          border: `1px solid ${
-                            active ? currentTheme.primary : currentTheme.border
-                          }`,
+                          padding: "16px 18px",
+                          borderRadius: "16px",
+                          backgroundColor: currentTheme.cardBg,
+                          border: `1px solid ${currentTheme.border}`,
                         }}
                       >
                         <div>
@@ -2186,60 +2402,69 @@ function App() {
                               color: currentTheme.text,
                             }}
                           >
-                            {doc.filename}
+                            📄 {doc.filename}
                           </div>
-                          <div
-                            style={{
-                              marginTop: "6px",
-                              color: currentTheme.textSecondary,
-                              fontSize: "0.92rem",
-                            }}
-                          >
-                            Opțiuni: Rezumat & Quiz
-                          </div>
+                          {courseName && (
+                            <div
+                              style={{
+                                marginTop: "4px",
+                                fontSize: "0.82rem",
+                                color: currentTheme.primary,
+                                fontWeight: "600",
+                              }}
+                            >
+                              📘 {courseName}
+                            </div>
+                          )}
                         </div>
-                        <div style={{ display: "flex", gap: "8px" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "6px",
+                            flexWrap: "wrap",
+                          }}
+                        >
                           <button
                             onClick={() => openPDFViewer(doc)}
                             style={{
-                              padding: "8px 12px",
+                              padding: "7px 11px",
                               borderRadius: "6px",
                               border: `1px solid ${currentTheme.primary}`,
                               backgroundColor: currentTheme.primary,
                               color: "#ffffff",
                               cursor: "pointer",
                               fontWeight: "600",
-                              fontSize: "0.85rem",
+                              fontSize: "0.82rem",
                             }}
                           >
-                            Vezi PDF
+                            PDF
                           </button>
                           <button
                             onClick={() => summarizeDocument(doc.filename)}
                             style={{
-                              padding: "8px 12px",
+                              padding: "7px 11px",
                               borderRadius: "6px",
                               border: `1px solid ${currentTheme.primary}`,
                               backgroundColor: "transparent",
                               color: currentTheme.primary,
                               cursor: "pointer",
                               fontWeight: "600",
-                              fontSize: "0.85rem",
+                              fontSize: "0.82rem",
                             }}
                           >
-                            Summarize
+                            Rezumat
                           </button>
                           <button
                             onClick={() => generateQuiz(doc.filename)}
                             style={{
-                              padding: "8px 12px",
+                              padding: "7px 11px",
                               borderRadius: "6px",
-                              border: `1px solid ${currentTheme.primary}`,
+                              border: `1px solid #8a2be2`,
                               backgroundColor: "transparent",
-                              color: currentTheme.primary,
+                              color: "#8a2be2",
                               cursor: "pointer",
                               fontWeight: "600",
-                              fontSize: "0.85rem",
+                              fontSize: "0.82rem",
                             }}
                           >
                             Quiz
@@ -2247,14 +2472,14 @@ function App() {
                           <button
                             onClick={() => handleDeleteDocument(doc.filename)}
                             style={{
-                              padding: "8px 12px",
+                              padding: "7px 11px",
                               borderRadius: "6px",
                               border: `1px solid ${currentTheme.error}`,
                               backgroundColor: "transparent",
                               color: currentTheme.error,
                               cursor: "pointer",
                               fontWeight: "600",
-                              fontSize: "0.85rem",
+                              fontSize: "0.82rem",
                             }}
                           >
                             Șterge
@@ -2267,6 +2492,8 @@ function App() {
               )}
             </article>
           </section>
+
+          {/* ── Analysis & Quiz section ── */}
           <section
             style={{
               borderRadius: "24px",
@@ -2276,13 +2503,14 @@ function App() {
               boxShadow: darkMode
                 ? "0 20px 60px rgba(0,0,0,0.14)"
                 : "0 20px 60px rgba(15, 23, 42, 0.07)",
+              marginBottom: "28px",
             }}
           >
             <div
               style={{
                 display: "flex",
                 justifyContent: "space-between",
-                alignItems: "center",
+                alignItems: "flex-start",
                 flexWrap: "wrap",
                 gap: "16px",
                 marginBottom: "22px",
@@ -2299,67 +2527,252 @@ function App() {
                   Analiză & Examinare cu {activeAgentBModelName}
                 </h2>
                 <p style={{ margin: 0, color: currentTheme.textSecondary }}>
-                  Alege documentul pentru a genera un rezumat structurat sau
-                  pentru a-ți testa cunoștințele printr-un quiz interactiv.
+                  Alege un document individual sau un curs întreg pentru rezumat
+                  sau quiz.
                 </p>
               </div>
-              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                <select
-                  value={selectedDoc}
-                  onChange={(event) => setSelectedDoc(event.target.value)}
+            </div>
+
+            {/* ── Summarize ── */}
+            <div
+              style={{
+                marginBottom: "24px",
+                padding: "20px",
+                borderRadius: "16px",
+                backgroundColor: currentTheme.cardBg,
+                border: `1px solid ${currentTheme.border}`,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "16px",
+                  marginBottom: "14px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <h3
                   style={{
-                    minWidth: "220px",
-                    padding: "12px 14px",
-                    borderRadius: "14px",
-                    border: `1px solid ${currentTheme.border}`,
-                    backgroundColor: currentTheme.cardBg,
+                    margin: 0,
+                    fontSize: "1.1rem",
                     color: currentTheme.text,
-                    fontSize: "0.95rem",
                   }}
                 >
-                  <option value="">Alege un document</option>
-                  {documents.map((doc, index) => (
-                    <option key={index} value={doc.filename}>
-                      {doc.filename}
-                    </option>
-                  ))}
-                </select>
+                  📝 Rezumat
+                </h3>
+                <ScopeToggle
+                  value={summaryScopeMode}
+                  onChange={setSummaryScopeMode}
+                  currentTheme={currentTheme}
+                />
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: "12px",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                {summaryScopeMode === "document" ? (
+                  <select
+                    value={selectedDoc}
+                    onChange={(e) => setSelectedDoc(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: "200px",
+                      padding: "11px 14px",
+                      borderRadius: "12px",
+                      border: `1px solid ${currentTheme.border}`,
+                      backgroundColor: currentTheme.surface,
+                      color: currentTheme.text,
+                      fontSize: "0.95rem",
+                    }}
+                  >
+                    <option value="">— Alege un document —</option>
+                    {documents.map((doc, i) => (
+                      <option key={i} value={doc.filename}>
+                        {doc.filename}
+                        {doc.course_id
+                          ? ` [${getCourseTitle(doc.course_id)}]`
+                          : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <select
+                    value={selectedSummarizeCourse}
+                    onChange={(e) => setSelectedSummarizeCourse(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: "200px",
+                      padding: "11px 14px",
+                      borderRadius: "12px",
+                      border: `1px solid ${currentTheme.border}`,
+                      backgroundColor: currentTheme.surface,
+                      color: currentTheme.text,
+                      fontSize: "0.95rem",
+                    }}
+                  >
+                    <option value="">— Alege un curs —</option>
+                    {courses.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title} ({docsByCourse(c.id).length} fișiere)
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <button
-                  onClick={() => summarizeDocument(selectedDoc)}
-                  disabled={!selectedDoc || summarizing}
+                  onClick={() =>
+                    summaryScopeMode === "course"
+                      ? summarizeDocument(null, selectedSummarizeCourse)
+                      : summarizeDocument(selectedDoc)
+                  }
+                  disabled={
+                    summarizing ||
+                    (summaryScopeMode === "document"
+                      ? !selectedDoc
+                      : !selectedSummarizeCourse)
+                  }
                   style={{
-                    padding: "12px 18px",
-                    borderRadius: "14px",
+                    padding: "11px 20px",
+                    borderRadius: "12px",
                     border: "none",
                     backgroundColor:
-                      !selectedDoc || summarizing
+                      summarizing ||
+                      (summaryScopeMode === "document"
+                        ? !selectedDoc
+                        : !selectedSummarizeCourse)
                         ? currentTheme.buttonDisabled
                         : currentTheme.primary,
                     color: "#ffffff",
-                    cursor:
-                      !selectedDoc || summarizing ? "not-allowed" : "pointer",
+                    cursor: "pointer",
                     fontWeight: "700",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {summarizing ? "Generare…" : "Generează rezumat"}
                 </button>
-                <button
-                  onClick={() => generateQuiz(selectedDoc)}
-                  disabled={!selectedDoc || quizGenerating}
+              </div>
+            </div>
+
+            {/* ── Quiz ── */}
+            <div
+              style={{
+                padding: "20px",
+                borderRadius: "16px",
+                backgroundColor: currentTheme.cardBg,
+                border: `1px solid ${currentTheme.border}`,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "16px",
+                  marginBottom: "14px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <h3
                   style={{
-                    padding: "12px 18px",
-                    borderRadius: "14px",
+                    margin: 0,
+                    fontSize: "1.1rem",
+                    color: currentTheme.text,
+                  }}
+                >
+                  🎯 Quiz
+                </h3>
+                <ScopeToggle
+                  value={quizScopeMode}
+                  onChange={setQuizScopeMode}
+                  currentTheme={currentTheme}
+                />
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: "12px",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                {quizScopeMode === "document" ? (
+                  <select
+                    value={selectedQuizDoc}
+                    onChange={(e) => setSelectedQuizDoc(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: "200px",
+                      padding: "11px 14px",
+                      borderRadius: "12px",
+                      border: `1px solid ${currentTheme.border}`,
+                      backgroundColor: currentTheme.surface,
+                      color: currentTheme.text,
+                      fontSize: "0.95rem",
+                    }}
+                  >
+                    <option value="">— Alege un document —</option>
+                    {documents.map((doc, i) => (
+                      <option key={i} value={doc.filename}>
+                        {doc.filename}
+                        {doc.course_id
+                          ? ` [${getCourseTitle(doc.course_id)}]`
+                          : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <select
+                    value={selectedQuizCourse}
+                    onChange={(e) => setSelectedQuizCourse(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: "200px",
+                      padding: "11px 14px",
+                      borderRadius: "12px",
+                      border: `1px solid ${currentTheme.border}`,
+                      backgroundColor: currentTheme.surface,
+                      color: currentTheme.text,
+                      fontSize: "0.95rem",
+                    }}
+                  >
+                    <option value="">— Alege un curs —</option>
+                    {courses.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title} ({docsByCourse(c.id).length} fișiere)
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  onClick={() =>
+                    quizScopeMode === "course"
+                      ? generateQuiz(null, selectedQuizCourse)
+                      : generateQuiz(selectedQuizDoc)
+                  }
+                  disabled={
+                    quizGenerating ||
+                    (quizScopeMode === "document"
+                      ? !selectedQuizDoc
+                      : !selectedQuizCourse)
+                  }
+                  style={{
+                    padding: "11px 20px",
+                    borderRadius: "12px",
                     border: "none",
                     backgroundColor:
-                      !selectedDoc || quizGenerating
+                      quizGenerating ||
+                      (quizScopeMode === "document"
+                        ? !selectedQuizDoc
+                        : !selectedQuizCourse)
                         ? currentTheme.buttonDisabled
                         : "#8a2be2",
                     color: "#ffffff",
-                    cursor:
-                      !selectedDoc || quizGenerating
-                        ? "not-allowed"
-                        : "pointer",
+                    cursor: "pointer",
                     fontWeight: "700",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {quizGenerating ? "Generare Quiz…" : "Generează Quiz"}
@@ -2367,254 +2780,11 @@ function App() {
               </div>
             </div>
 
-            {showQuiz ? (
+            {/* ── Summary display ── */}
+            {!showQuiz && summary && (
               <div
                 style={{
-                  backgroundColor: currentTheme.cardBg,
-                  border: `1px solid ${currentTheme.border}`,
-                  borderRadius: "22px",
-                  padding: "30px",
-                  paddingRight: "10px",
-                  boxShadow: "0 8px 30px rgba(0,0,0,0.06)",
-                  marginBottom: "30px",
-                  position: "relative",
-                }}
-              >
-                <button
-                  onClick={() => setShowQuiz(false)}
-                  style={{
-                    position: "absolute",
-                    top: "20px",
-                    right: "25px",
-                    background: "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    padding: "8px",
-                    color: currentTheme.textSecondary,
-                    fontSize: "18px",
-                    zIndex: 2,
-                  }}
-                >
-                  ✖
-                </button>
-                <h2
-                  style={{
-                    color: currentTheme.text,
-                    marginTop: 0,
-                    marginBottom: "25px",
-                  }}
-                >
-                  Quiz pe document
-                </h2>
-
-                <div
-                  style={{
-                    maxHeight: "60vh",
-                    overflowY: "auto",
-                    paddingRight: "15px",
-                  }}
-                >
-                  {quizGenerating ? (
-                    <div
-                      style={{
-                        textAlign: "center",
-                        padding: "40px",
-                        color: currentTheme.textSecondary,
-                      }}
-                    >
-                      <div>
-                        Agentul B concepe întrebările (poate dura puțin)...
-                      </div>
-                    </div>
-                  ) : quizData ? (
-                    <>
-                      {quizData.questions?.map((q, index) => (
-                        <div
-                          key={index}
-                          style={{
-                            marginBottom: "25px",
-                            padding: "20px",
-                            borderRadius: "12px",
-                            backgroundColor: currentTheme.surface,
-                          }}
-                        >
-                          <p
-                            style={{
-                              fontWeight: "600",
-                              marginBottom: "15px",
-                              color: currentTheme.text,
-                            }}
-                          >
-                            {index + 1}. {q.question}
-                          </p>
-                          <div
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: "10px",
-                            }}
-                          >
-                            {Object.entries(q.options).map(([key, value]) => {
-                              const isSelected = quizAnswers[index] === key;
-                              const showCorrect =
-                                quizSubmitted && q.correct_answer === key;
-                              const showWrong =
-                                quizSubmitted &&
-                                isSelected &&
-                                q.correct_answer !== key;
-
-                              let bgColor = currentTheme.cardBg;
-                              let bdColor = currentTheme.border;
-                              if (showCorrect) {
-                                bgColor = "rgba(46, 160, 67, 0.1)";
-                                bdColor = "#2ea043";
-                              } else if (showWrong) {
-                                bgColor = "rgba(248, 81, 73, 0.1)";
-                                bdColor = currentTheme.error;
-                              } else if (isSelected) {
-                                bdColor = currentTheme.primary;
-                                bgColor = darkMode
-                                  ? "rgba(88, 166, 255, 0.1)"
-                                  : "#f0f6fc";
-                              }
-
-                              return (
-                                <label
-                                  key={key}
-                                  style={{
-                                    padding: "12px 15px",
-                                    borderRadius: "8px",
-                                    border: `1px solid ${bdColor}`,
-                                    backgroundColor: bgColor,
-                                    cursor: quizSubmitted
-                                      ? "default"
-                                      : "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "10px",
-                                    color: currentTheme.text,
-                                  }}
-                                >
-                                  <input
-                                    type="radio"
-                                    name={`question-${index}`}
-                                    value={key}
-                                    checked={isSelected}
-                                    onChange={() =>
-                                      handleQuizAnswer(index, key)
-                                    }
-                                    disabled={quizSubmitted}
-                                    style={{ margin: 0 }}
-                                  />
-                                  <strong>{key})</strong> {value}
-                                </label>
-                              );
-                            })}
-                          </div>
-
-                          {quizSubmitted && (
-                            <div
-                              style={{
-                                marginTop: "15px",
-                                padding: "15px",
-                                backgroundColor:
-                                  q.correct_answer === quizAnswers[index]
-                                    ? "rgba(46, 160, 67, 0.1)"
-                                    : "rgba(248, 81, 73, 0.1)",
-                                borderRadius: "8px",
-                                color: currentTheme.text,
-                              }}
-                            >
-                              {q.correct_answer === quizAnswers[index] ? (
-                                <span
-                                  style={{
-                                    color: "#2ea043",
-                                    fontWeight: "bold",
-                                  }}
-                                >
-                                  ✓ Corect!
-                                </span>
-                              ) : (
-                                <span
-                                  style={{
-                                    color: currentTheme.error,
-                                    fontWeight: "bold",
-                                  }}
-                                >
-                                  ✗ Greșit. Răspunsul corect era{" "}
-                                  {q.correct_answer}.
-                                </span>
-                              )}
-                              <p
-                                style={{ marginTop: "8px", fontSize: "0.9rem" }}
-                              >
-                                {q.explanation}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-
-                      <div style={{ marginTop: "30px", textAlign: "center" }}>
-                        {quizSubmitted ? (
-                          <div
-                            style={{
-                              padding: "20px",
-                              borderRadius: "12px",
-                              border: `2px solid ${currentTheme.primary}`,
-                              color: currentTheme.text,
-                            }}
-                          >
-                            <h3>
-                              Scor Final:{" "}
-                              {calculateQuizScore()}{" "}
-                              / {quizData.questions.length}
-                            </h3>
-                            <button
-                              onClick={() => generateQuiz(selectedDoc)}
-                              style={{
-                                padding: "10px 20px",
-                                marginTop: "10px",
-                                backgroundColor: currentTheme.primary,
-                                color: "white",
-                                border: "none",
-                                borderRadius: "8px",
-                                cursor: "pointer",
-                                fontWeight: "bold",
-                              }}
-                            >
-                              Generează alt quiz
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={submitQuiz}
-                            style={{
-                              padding: "12px 30px",
-                              backgroundColor: "#2ea043",
-                              color: "white",
-                              border: "none",
-                              borderRadius: "8px",
-                              cursor: "pointer",
-                              fontWeight: "bold",
-                              fontSize: "16px",
-                            }}
-                          >
-                            Trimite Răspunsurile
-                          </button>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <div style={{ color: currentTheme.error }}>
-                      A apărut o problemă la afișarea quiz-ului.
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : summary ? (
-              <div
-                style={{
+                  marginTop: "24px",
                   backgroundColor: currentTheme.cardBg,
                   border: `1px solid ${currentTheme.border}`,
                   borderRadius: "22px",
@@ -2639,7 +2809,7 @@ function App() {
                         fontSize: "1.3rem",
                       }}
                     >
-                      Rezumat pentru {selectedDoc || "document"}
+                      Rezumat — {summaryLabel}
                     </h3>
                     <p
                       style={{
@@ -2695,14 +2865,263 @@ function App() {
                   {summary}
                 </div>
               </div>
-            ) : (
+            )}
+
+            {/* ── Quiz display ── */}
+            {showQuiz && (
               <div
                 style={{
+                  marginTop: "24px",
+                  backgroundColor: currentTheme.cardBg,
+                  border: `1px solid ${currentTheme.border}`,
+                  borderRadius: "22px",
+                  padding: "30px",
+                  paddingRight: "10px",
+                  position: "relative",
+                }}
+              >
+                <button
+                  onClick={() => setShowQuiz(false)}
+                  style={{
+                    position: "absolute",
+                    top: "20px",
+                    right: "25px",
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    color: currentTheme.textSecondary,
+                    fontSize: "18px",
+                  }}
+                >
+                  ✖
+                </button>
+                <h2
+                  style={{
+                    color: currentTheme.text,
+                    marginTop: 0,
+                    marginBottom: "6px",
+                  }}
+                >
+                  Quiz — {quizLabel}
+                </h2>
+                <div
+                  style={{
+                    maxHeight: "60vh",
+                    overflowY: "auto",
+                    paddingRight: "15px",
+                  }}
+                >
+                  {quizGenerating ? (
+                    <div
+                      style={{
+                        textAlign: "center",
+                        padding: "40px",
+                        color: currentTheme.textSecondary,
+                      }}
+                    >
+                      <div>
+                        Agentul B concepe întrebările
+                        {quizScopeMode === "course" ? " din întregul curs" : ""}{" "}
+                        (poate dura puțin)...
+                      </div>
+                    </div>
+                  ) : quizData ? (
+                    <>
+                      {quizData.questions?.map((q, index) => (
+                        <div
+                          key={index}
+                          style={{
+                            marginBottom: "25px",
+                            padding: "20px",
+                            borderRadius: "12px",
+                            backgroundColor: currentTheme.surface,
+                          }}
+                        >
+                          <p
+                            style={{
+                              fontWeight: "600",
+                              marginBottom: "15px",
+                              color: currentTheme.text,
+                            }}
+                          >
+                            {index + 1}. {q.question}
+                          </p>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "10px",
+                            }}
+                          >
+                            {Object.entries(q.options).map(([key, value]) => {
+                              const isSelected = quizAnswers[index] === key;
+                              const showCorrect =
+                                quizSubmitted && q.correct_answer === key;
+                              const showWrong =
+                                quizSubmitted &&
+                                isSelected &&
+                                q.correct_answer !== key;
+                              let bgColor = currentTheme.cardBg,
+                                bdColor = currentTheme.border;
+                              if (showCorrect) {
+                                bgColor = "rgba(46, 160, 67, 0.1)";
+                                bdColor = "#2ea043";
+                              } else if (showWrong) {
+                                bgColor = "rgba(248, 81, 73, 0.1)";
+                                bdColor = currentTheme.error;
+                              } else if (isSelected) {
+                                bdColor = currentTheme.primary;
+                                bgColor = darkMode
+                                  ? "rgba(88, 166, 255, 0.1)"
+                                  : "#f0f6fc";
+                              }
+                              return (
+                                <label
+                                  key={key}
+                                  style={{
+                                    padding: "12px 15px",
+                                    borderRadius: "8px",
+                                    border: `1px solid ${bdColor}`,
+                                    backgroundColor: bgColor,
+                                    cursor: quizSubmitted
+                                      ? "default"
+                                      : "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "10px",
+                                    color: currentTheme.text,
+                                  }}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`question-${index}`}
+                                    value={key}
+                                    checked={isSelected}
+                                    onChange={() =>
+                                      handleQuizAnswer(index, key)
+                                    }
+                                    disabled={quizSubmitted}
+                                    style={{ margin: 0 }}
+                                  />
+                                  <strong>{key})</strong> {value}
+                                </label>
+                              );
+                            })}
+                          </div>
+                          {quizSubmitted && (
+                            <div
+                              style={{
+                                marginTop: "15px",
+                                padding: "15px",
+                                backgroundColor:
+                                  q.correct_answer === quizAnswers[index]
+                                    ? "rgba(46, 160, 67, 0.1)"
+                                    : "rgba(248, 81, 73, 0.1)",
+                                borderRadius: "8px",
+                                color: currentTheme.text,
+                              }}
+                            >
+                              {q.correct_answer === quizAnswers[index] ? (
+                                <span
+                                  style={{
+                                    color: "#2ea043",
+                                    fontWeight: "bold",
+                                  }}
+                                >
+                                  ✓ Corect!
+                                </span>
+                              ) : (
+                                <span
+                                  style={{
+                                    color: currentTheme.error,
+                                    fontWeight: "bold",
+                                  }}
+                                >
+                                  ✗ Greșit. Răspunsul corect era{" "}
+                                  {q.correct_answer}.
+                                </span>
+                              )}
+                              <p
+                                style={{ marginTop: "8px", fontSize: "0.9rem" }}
+                              >
+                                {q.explanation}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <div style={{ marginTop: "30px", textAlign: "center" }}>
+                        {quizSubmitted ? (
+                          <div
+                            style={{
+                              padding: "20px",
+                              borderRadius: "12px",
+                              border: `2px solid ${currentTheme.primary}`,
+                              color: currentTheme.text,
+                            }}
+                          >
+                            <h3>
+                              Scor Final: {calculateQuizScore()} /{" "}
+                              {quizData.questions.length}
+                            </h3>
+                            <button
+                              onClick={() =>
+                                quizScopeMode === "course"
+                                  ? generateQuiz(null, selectedQuizCourse)
+                                  : generateQuiz(selectedQuizDoc)
+                              }
+                              style={{
+                                padding: "10px 20px",
+                                marginTop: "10px",
+                                backgroundColor: currentTheme.primary,
+                                color: "white",
+                                border: "none",
+                                borderRadius: "8px",
+                                cursor: "pointer",
+                                fontWeight: "bold",
+                              }}
+                            >
+                              Generează alt quiz
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={submitQuiz}
+                            style={{
+                              padding: "12px 30px",
+                              backgroundColor: "#2ea043",
+                              color: "white",
+                              border: "none",
+                              borderRadius: "8px",
+                              cursor: "pointer",
+                              fontWeight: "bold",
+                              fontSize: "16px",
+                            }}
+                          >
+                            Trimite Răspunsurile
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ color: currentTheme.error }}>
+                      A apărut o problemă la afișarea quiz-ului.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Empty state for neither summary nor quiz showing */}
+            {!showQuiz && !summary && !summarizing && (
+              <div
+                style={{
+                  marginTop: "24px",
                   padding: "24px",
                   borderRadius: "22px",
                   border: `1px dashed ${currentTheme.border}`,
                   backgroundColor: currentTheme.cardBg,
-                  minHeight: "180px",
+                  minHeight: "120px",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -2710,13 +3129,14 @@ function App() {
                 }}
               >
                 <p style={{ margin: 0 }}>
-                  Rezumatul tău va apărea aici după ce selectezi un document și
-                  apeși pe „Generează rezumat”.
+                  Selectează un document sau un curs, apoi generează un rezumat
+                  sau quiz.
                 </p>
               </div>
             )}
           </section>
-          {/* Q&A Section */}
+
+          {/* ── Q&A Section ── */}
           <section
             style={{
               marginTop: "28px",
@@ -2737,44 +3157,95 @@ function App() {
                   fontSize: "1.6rem",
                 }}
               >
-                Q&A cu {activeAgentAModelName}
+                Q&amp;A cu {activeAgentAModelName}
               </h2>
               <p style={{ margin: 0, color: currentTheme.textSecondary }}>
-                Adresează întrebări despre conținutul cursurilor tale.{" "}
-                {activeAgentAModelName} va răspunde folosind informațiile din
-                documentele încărcate.
+                Adresează întrebări despre un document specific sau despre tot
+                conținutul unui curs.
               </p>
             </div>
 
+            {/* Scope toggle + selector */}
             <div
               style={{
                 display: "flex",
-                gap: "12px",
+                gap: "16px",
                 flexWrap: "wrap",
+                alignItems: "center",
                 marginBottom: "22px",
               }}
             >
-              <select
-                value={selectedQADoc}
-                onChange={(event) => setSelectedQADoc(event.target.value)}
-                style={{
-                  padding: "12px 14px",
-                  borderRadius: "14px",
-                  border: `1px solid ${currentTheme.border}`,
-                  backgroundColor: currentTheme.cardBg,
-                  color: currentTheme.text,
-                  fontSize: "0.95rem",
+              <ScopeToggle
+                value={qaScopeMode}
+                onChange={(v) => {
+                  setQAScopeMode(v);
+                  setChatHistory([]);
                 }}
-              >
-                <option value="">Toate cursurile</option>
-                {documents.map((doc, index) => (
-                  <option key={index} value={doc.filename}>
-                    {doc.filename}
-                  </option>
-                ))}
-              </select>
+                currentTheme={currentTheme}
+              />
+              {qaScopeMode === "document" ? (
+                <select
+                  value={selectedQADoc}
+                  onChange={(e) => setSelectedQADoc(e.target.value)}
+                  style={{
+                    padding: "11px 14px",
+                    borderRadius: "14px",
+                    border: `1px solid ${currentTheme.border}`,
+                    backgroundColor: currentTheme.cardBg,
+                    color: currentTheme.text,
+                    fontSize: "0.95rem",
+                    minWidth: "220px",
+                  }}
+                >
+                  <option value="">Toate documentele mele</option>
+                  {documents.map((doc, i) => (
+                    <option key={i} value={doc.filename}>
+                      {doc.filename}
+                      {doc.course_id
+                        ? ` [${getCourseTitle(doc.course_id)}]`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  value={selectedQACourse}
+                  onChange={(e) => {
+                    setSelectedQACourse(e.target.value);
+                    setChatHistory([]);
+                  }}
+                  style={{
+                    padding: "11px 14px",
+                    borderRadius: "14px",
+                    border: `1px solid ${currentTheme.border}`,
+                    backgroundColor: currentTheme.cardBg,
+                    color: currentTheme.text,
+                    fontSize: "0.95rem",
+                    minWidth: "220px",
+                  }}
+                >
+                  <option value="">— Alege un curs —</option>
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.title} ({docsByCourse(c.id).length} fișiere)
+                    </option>
+                  ))}
+                </select>
+              )}
+              {qaScopeMode === "course" && selectedQACourse && (
+                <span
+                  style={{
+                    fontSize: "0.85rem",
+                    color: currentTheme.textSecondary,
+                  }}
+                >
+                  Caută în {docsByCourse(selectedQACourse).length} fișiere din
+                  cursul „{getCourseTitle(selectedQACourse)}"
+                </span>
+              )}
             </div>
 
+            {/* Chat window */}
             <div
               style={{
                 backgroundColor: currentTheme.cardBg,
@@ -2805,7 +3276,9 @@ function App() {
                       margin: "auto",
                     }}
                   >
-                    Nu există mesaje. Începe o conversație!
+                    {qaScopeMode === "course" && !selectedQACourse
+                      ? "Selectează un curs pentru a începe conversația."
+                      : "Nu există mesaje. Începe o conversație!"}
                   </div>
                 ) : (
                   chatHistory.map((msg, i) => (
@@ -2869,7 +3342,14 @@ function App() {
                   type="text"
                   value={chatMessage}
                   onChange={(e) => setChatMessage(e.target.value)}
-                  placeholder="Întreabă ceva..."
+                  placeholder={
+                    qaScopeMode === "course" && selectedQACourse
+                      ? `Întreabă despre cursul "${getCourseTitle(
+                          selectedQACourse
+                        )}"...`
+                      : "Întreabă ceva..."
+                  }
+                  disabled={qaScopeMode === "course" && !selectedQACourse}
                   style={{
                     flex: 1,
                     padding: "14px 18px",
@@ -2882,20 +3362,23 @@ function App() {
                 />
                 <button
                   type="submit"
-                  disabled={chatLoading || !chatMessage.trim()}
+                  disabled={
+                    chatLoading ||
+                    !chatMessage.trim() ||
+                    (qaScopeMode === "course" && !selectedQACourse)
+                  }
                   style={{
                     padding: "14px 24px",
                     borderRadius: "16px",
                     border: "none",
                     backgroundColor:
-                      chatLoading || !chatMessage.trim()
+                      chatLoading ||
+                      !chatMessage.trim() ||
+                      (qaScopeMode === "course" && !selectedQACourse)
                         ? currentTheme.buttonDisabled
                         : currentTheme.primary,
                     color: "#ffffff",
-                    cursor:
-                      chatLoading || !chatMessage.trim()
-                        ? "not-allowed"
-                        : "pointer",
+                    cursor: "pointer",
                     fontWeight: "700",
                   }}
                 >
