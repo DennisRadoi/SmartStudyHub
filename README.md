@@ -119,6 +119,14 @@ npm run dev
 - **AI Models**: Ollama (Mistral, Qwen 2.5, nomic-embed-text) & Google Gemini REST API.
 - **Local Vector DB**: ChromaDB
 
+## 🧪 Model Recommendations
+
+- **Local models (Agent A):** `gemma3n` was the most reliable option without failures, with `mistral` close behind. If you want faster response times, `gemma2:2b`, `gemma3:1b`, and `gemma3:4b` have comparable results with eachother.
+- **Gemini (Agent A):** `gemini-3.1-flash-lite` is recommended because the Gemini API offers generous free tokens, it is the fastest model tested, and response quality is comparable to higher-cost options (`gemini-2.5-flash`, `gemini-3.5-flash`).
+- **Local models (Agent B, summarization):** `gemma3:1b` often returns acceptable summaries (short but usable), yet it can hallucinate. The recommended choice remains `gemma3:4b`, which produces very strong results, but averaged close to 2 minutes per run in tests.
+- **Local models (Agent B, quizzes):** No local model produced consistently good quiz results, so the **Gemini API is recommended**.
+- **Gemini (Agent B):** `gemini-3.1-flash-lite` remains the recommended choice.
+
 ## 🚀 Deployment & CI/CD
 
 ### Docker Deployment
