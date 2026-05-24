@@ -253,6 +253,43 @@ def save_document_record(owner_id: str, filename: str, source: str, file_path: s
     conn.commit()
     conn.close()
 
+# ─────────────────────────────────────────────
+# NEW HELPER: get all filenames for a course
+# ─────────────────────────────────────────────
+def get_course_filenames(course_id: str, user: dict) -> list:
+    """Return list of filenames belonging to a course, respecting user permissions."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if user["role"] == "developer":
+        cursor.execute(
+            "SELECT filename FROM documents WHERE course_id = ?",
+            (course_id,)
+        )
+    else:
+        cursor.execute(
+            "SELECT filename FROM documents WHERE course_id = ? AND owner_id = ?",
+            (course_id, user["id"])
+        )
+    filenames = [row["filename"] for row in cursor.fetchall()]
+    conn.close()
+    return filenames
+
+
+def get_chroma_docs_for_filenames(filenames: list) -> dict:
+    """Fetch all ChromaDB documents for a list of filenames."""
+    if not filenames:
+        return {"documents": [], "metadatas": []}
+    if len(filenames) == 1:
+        return collection.get(
+            where={"source": filenames[0]},
+            include=["documents", "metadatas"]
+        )
+    return collection.get(
+        where={"source": {"$in": filenames}},
+        include=["documents", "metadatas"]
+    )
+
+
 class SignupRequest(BaseModel):
     username: str
     email: str
@@ -266,6 +303,7 @@ class LoginRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     filename: Optional[str] = None
+    course_id: Optional[str] = None          # ← NEW: query entire course
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
     gemini_model: Optional[str] = None
@@ -277,26 +315,21 @@ class QuizAttemptRequest(BaseModel):
     total_questions: int
 
 
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup - don't block on model downloads
     yield
-    # Shutdown
-    pass
 
 app = FastAPI(title="Smart Study Hub API", lifespan=lifespan)
 
-# --- Courses API Models and Endpoints ---
-from typing import Optional
-
+# --- Courses API Models ---
 class CourseCreateRequest(BaseModel):
     title: str
     description: Optional[str] = None
 
 
-# --- Courses Endpoints ---
+# ─────────────────────────────────────────────
+# COURSES ENDPOINTS
+# ─────────────────────────────────────────────
 @app.post("/api/courses")
 async def create_course(payload: CourseCreateRequest, authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -313,7 +346,6 @@ async def create_course(payload: CourseCreateRequest, authorization: Optional[st
     )
     conn.commit()
     conn.close()
-
     return {"id": course_id, "title": payload.title, "description": payload.description}
 
 
@@ -326,15 +358,12 @@ async def list_courses(authorization: Optional[str] = Header(None)):
 
     conn = get_db_connection()
     cursor = conn.cursor()
-
     if user["role"] == "developer":
         cursor.execute("SELECT * FROM courses ORDER BY created_at DESC")
     else:
         cursor.execute("SELECT * FROM courses WHERE owner_id = ? ORDER BY created_at DESC", (user["id"],))
-
     courses = [dict(row) for row in cursor.fetchall()]
     conn.close()
-
     return {"courses": courses}
 
 
@@ -347,21 +376,46 @@ async def delete_course(course_id: str, authorization: Optional[str] = Header(No
 
     conn = get_db_connection()
     cursor = conn.cursor()
-
     if user["role"] == "developer":
         cursor.execute("DELETE FROM courses WHERE id = ?", (course_id,))
     else:
         cursor.execute("DELETE FROM courses WHERE id = ? AND owner_id = ?", (course_id, user["id"]))
-
     conn.commit()
     conn.close()
-
     return {"message": "Course deleted"}
+
+
+# ─────────────────────────────────────────────
+# NEW: List documents for a specific course
+# ─────────────────────────────────────────────
+@app.get("/api/courses/{course_id}/documents")
+async def get_course_documents(course_id: str, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if user["role"] == "developer":
+        cursor.execute(
+            "SELECT d.filename, d.file_path, d.uploaded_at FROM documents d WHERE d.course_id = ? ORDER BY d.uploaded_at ASC",
+            (course_id,)
+        )
+    else:
+        cursor.execute(
+            "SELECT d.filename, d.file_path, d.uploaded_at FROM documents d WHERE d.course_id = ? AND d.owner_id = ? ORDER BY d.uploaded_at ASC",
+            (course_id, user["id"])
+        )
+    docs = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return {"documents": docs, "course_id": course_id, "count": len(docs)}
+
 
 # Allow requests from our Node.js frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # For production, restrict to frontend URL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -383,7 +437,6 @@ async def list_ollama_models(authorization: Optional[str] = Header(None)):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
     token = authorization.split(" ", 1)[1].strip()
     get_user_by_token(token)
-
     try:
         response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
         if response.status_code != 200:
@@ -400,7 +453,6 @@ async def pull_ollama_model(payload: OllamaPullRequest, authorization: Optional[
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
     token = authorization.split(" ", 1)[1].strip()
     get_user_by_token(token)
-
     if not payload.name.strip():
         raise HTTPException(status_code=400, detail="Model name is required.")
 
@@ -416,7 +468,6 @@ async def pull_ollama_model(payload: OllamaPullRequest, authorization: Optional[
                 if resp.status_code != 200:
                     yield json.dumps({"type": "error", "message": resp.text}) + "\n"
                     return
-
                 for line in resp.iter_lines():
                     if not line:
                         continue
@@ -431,7 +482,6 @@ async def pull_ollama_model(payload: OllamaPullRequest, authorization: Optional[
                         yield json.dumps(payload_out) + "\n"
                     except Exception:
                         continue
-
                 yield json.dumps({"type": "done"}) + "\n"
         except requests.exceptions.ConnectionError:
             yield json.dumps({"type": "error", "message": "Ollama is not running."}) + "\n"
@@ -481,7 +531,6 @@ async def admin_users(authorization: Optional[str] = Header(None)):
     user = get_user_by_token(token)
     if user["role"] != "developer":
         raise HTTPException(status_code=403, detail="Developer access required.")
-    
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id, username, email, role FROM users ORDER BY username")
@@ -495,7 +544,6 @@ async def get_chat_history(authorization: Optional[str] = Header(None)):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
     token = authorization.split(" ", 1)[1].strip()
     user = get_user_by_token(token)
-    
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -513,36 +561,25 @@ async def upload_document(file: UploadFile = File(...), course_id: Optional[str]
     token = authorization.split(" ", 1)[1].strip()
     user = get_user_by_token(token)
     
-    # Check Ollama and models before processing
     try:
         check_and_pull_ollama_model()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
     
-    # 1. Validation: Only allow PDF
     if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Only PDF files are supported."
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only PDF files are supported.")
 
-    # 2. Validation: Max 20 MB size limit
     file_bytes = await file.read()
     if len(file_bytes) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File exceeds maximum size limit of {MAX_FILE_SIZE_MB}MB."
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File exceeds maximum size limit of {MAX_FILE_SIZE_MB}MB.")
     await file.seek(0)
     
-    # 3. Save PDF to disk (User Story 6: View PDF in split pane)
     owner_id = user["id"]
     safe_filename = f"{owner_id}_{file.filename}"
     file_path = os.path.join(UPLOADS_DIR, safe_filename)
     with open(file_path, "wb") as buffer:
         buffer.write(file_bytes)
         
-    # 4. Extract text and insert into ChromaDB
     try:
         pdf_reader = PdfReader(file_path)
         documents = []
@@ -563,11 +600,7 @@ async def upload_document(file: UploadFile = File(...), course_id: Optional[str]
                 ids.append(f"{owner_id}_{file.filename}_page_{i+1}")
                 
         if documents:
-            collection.upsert(
-                documents=documents,
-                metadatas=metadatas,
-                ids=ids
-            )
+            collection.upsert(documents=documents, metadatas=metadatas, ids=ids)
             save_document_record(owner_id, file.filename, file.filename, file_path)
             if course_id:
                 conn = get_db_connection()
@@ -583,7 +616,6 @@ async def upload_document(file: UploadFile = File(...), course_id: Optional[str]
             return {"message": "⚠️ Document uploaded, but no text could be extracted (might be scanned/image).", "filename": file.filename, "pages": 0}
 
     except Exception as e:
-        # Cleanup file if error occurs
         if os.path.exists(file_path):
             os.remove(file_path)
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
@@ -595,17 +627,15 @@ async def list_documents(authorization: Optional[str] = Header(None)):
     token = authorization.split(" ", 1)[1].strip()
     user = get_user_by_token(token)
     
-    # Get documents from ChromaDB for metadata
     db_data = collection.get(include=["metadatas"])
     
-    # Get file paths from SQLite database
     conn = get_db_connection()
     cursor = conn.cursor()
     if user["role"] == "developer":
-        cursor.execute("SELECT filename, file_path FROM documents ORDER BY uploaded_at DESC")
+        cursor.execute("SELECT filename, file_path, course_id FROM documents ORDER BY uploaded_at DESC")
     else:
-        cursor.execute("SELECT filename, file_path FROM documents WHERE owner_id = ? ORDER BY uploaded_at DESC", (user["id"],))
-    db_files = {row["filename"]: row["file_path"] for row in cursor.fetchall()}
+        cursor.execute("SELECT filename, file_path, course_id FROM documents WHERE owner_id = ? ORDER BY uploaded_at DESC", (user["id"],))
+    db_files = {row["filename"]: {"file_path": row["file_path"], "course_id": row["course_id"]} for row in cursor.fetchall()}
     conn.close()
     
     if not db_data or not db_data["metadatas"]:
@@ -615,13 +645,15 @@ async def list_documents(authorization: Optional[str] = Header(None)):
     for meta in db_data["metadatas"]:
         source = meta.get("source")
         if source:
-            # Check if user owns this document or is developer
             if user["role"] == "developer" or meta.get("owner_id") == user["id"]:
-                file_path = db_files.get(source, "")
-                # Convert absolute path to relative URL path
+                file_info = db_files.get(source, {})
+                file_path = file_info.get("file_path", "")
                 relative_path = os.path.basename(file_path) if file_path else ""
-                unique_sources[source] = {"filename": source, "file_path": relative_path}
-
+                unique_sources[source] = {
+                    "filename": source,
+                    "file_path": relative_path,
+                    "course_id": file_info.get("course_id"),
+                }
     return {"documents": list(unique_sources.values())}
 
 @app.get("/api/dashboard")
@@ -637,28 +669,16 @@ async def get_dashboard(authorization: Optional[str] = Header(None)):
     if user["role"] == "developer":
         cursor.execute("SELECT COUNT(*) AS count FROM documents")
     else:
-        cursor.execute(
-            "SELECT COUNT(*) AS count FROM documents WHERE owner_id = ?",
-            (user["id"],),
-        )
+        cursor.execute("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ?", (user["id"],))
     studied_files = cursor.fetchone()["count"]
 
     if user["role"] == "developer":
         cursor.execute(
-            """
-            SELECT COUNT(*) AS attempts,
-                   AVG(CASE WHEN total_questions > 0 THEN (score * 100.0 / total_questions) END) AS average_score
-            FROM quiz_attempts
-            """
+            "SELECT COUNT(*) AS attempts, AVG(CASE WHEN total_questions > 0 THEN (score * 100.0 / total_questions) END) AS average_score FROM quiz_attempts"
         )
     else:
         cursor.execute(
-            """
-            SELECT COUNT(*) AS attempts,
-                   AVG(CASE WHEN total_questions > 0 THEN (score * 100.0 / total_questions) END) AS average_score
-            FROM quiz_attempts
-            WHERE user_id = ?
-            """,
+            "SELECT COUNT(*) AS attempts, AVG(CASE WHEN total_questions > 0 THEN (score * 100.0 / total_questions) END) AS average_score FROM quiz_attempts WHERE user_id = ?",
             (user["id"],),
         )
     quiz_stats = cursor.fetchone()
@@ -688,31 +708,17 @@ async def save_quiz_attempt(payload: QuizAttemptRequest, authorization: Optional
     if user["role"] == "developer":
         cursor.execute("SELECT 1 FROM documents WHERE filename = ? LIMIT 1", (payload.filename,))
     else:
-        cursor.execute(
-            "SELECT 1 FROM documents WHERE filename = ? AND owner_id = ? LIMIT 1",
-            (payload.filename, user["id"]),
-        )
+        cursor.execute("SELECT 1 FROM documents WHERE filename = ? AND owner_id = ? LIMIT 1", (payload.filename, user["id"]))
     if not cursor.fetchone():
         conn.close()
         raise HTTPException(status_code=404, detail="Document not found.")
 
     cursor.execute(
-        """
-        INSERT INTO quiz_attempts (id, user_id, filename, score, total_questions, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
-            uuid.uuid4().hex,
-            user["id"],
-            payload.filename,
-            payload.score,
-            payload.total_questions,
-            time.time(),
-        ),
+        "INSERT INTO quiz_attempts (id, user_id, filename, score, total_questions, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (uuid.uuid4().hex, user["id"], payload.filename, payload.score, payload.total_questions, time.time()),
     )
     conn.commit()
     conn.close()
-
     return {"message": "Quiz attempt saved."}
 
 @app.get("/api/pdf/{filename}")
@@ -733,11 +739,9 @@ async def get_pdf(filename: str, authorization: Optional[str] = Header(None)):
     
     if not row:
         raise HTTPException(status_code=404, detail="Document not found or unauthorized.")
-        
     file_path = row["file_path"]
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File missing on disk.")
-        
     return FileResponse(file_path, media_type="application/pdf", filename=filename)
 
 @app.delete("/api/documents/{filename}")
@@ -749,41 +753,30 @@ async def delete_document(filename: str, authorization: Optional[str] = Header(N
     
     conn = get_db_connection()
     cursor = conn.cursor()
-    
     if user["role"] == "developer":
         cursor.execute("SELECT file_path, owner_id FROM documents WHERE filename = ?", (filename,))
     else:
         cursor.execute("SELECT file_path, owner_id FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
-        
     row = cursor.fetchone()
     if row:
         file_path = row["file_path"]
         owner_id = row["owner_id"]
-        
-        # 1. Delete from disk
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
             except Exception as e:
                 print(f"Error deleting file: {e}")
-
-        # 2. Delete from database
         if user["role"] == "developer":
             cursor.execute("DELETE FROM documents WHERE filename = ?", (filename,))
             cursor.execute("DELETE FROM quiz_attempts WHERE filename = ?", (filename,))
         else:
             cursor.execute("DELETE FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
-            cursor.execute(
-                "DELETE FROM quiz_attempts WHERE filename = ? AND user_id = ?",
-                (filename, user["id"]),
-            )
+            cursor.execute("DELETE FROM quiz_attempts WHERE filename = ? AND user_id = ?", (filename, user["id"]))
         conn.commit()
     else:
-        owner_id = user["id"] # Fallback for deleting ghost files from ChromaDB
-
+        owner_id = user["id"]
     conn.close()
     
-    # 3. Delete from ChromaDB
     try:
         results = collection.get(where={"filename": filename}, include=["metadatas"])
         if results and results.get("ids"):
@@ -798,34 +791,19 @@ async def delete_document(filename: str, authorization: Optional[str] = Header(N
 
     return {"message": "Document deleted successfully."}
 
+
+# ─────────────────────────────────────────────
+# SUMMARIZE — single document (unchanged) + course variant
+# ─────────────────────────────────────────────
 class SummarizeRequest(BaseModel):
     use_gemini: bool = False
     gemini_api_key: Optional[str] = None
     gemini_model: Optional[str] = None
     local_model: Optional[str] = None
 
-@app.post("/api/summarize/{filename}")
-async def summarize_document(filename: str, payload: SummarizeRequest):
-    # Check Ollama and models before processing
-    if not payload.use_gemini:
-        try:
-            check_and_pull_ollama_model()
-        except Exception as e:
-            raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
-    
-    # Retrieve all pages for the document
-    db_data = collection.get(
-        where={"source": filename},
-        include=["documents", "metadatas"]
-    )
-    
-    if not db_data or not db_data["documents"]:
-        raise HTTPException(status_code=404, detail="Document not found.")
-    
-    # Concatenate all text from the document
-    full_text = "\n".join(db_data["documents"])
-    
-    # Prepare summarization prompt
+
+async def _run_summarize(full_text: str, payload: SummarizeRequest) -> str:
+    """Core summarization logic shared by single-doc and course endpoints."""
     prompt = f"""Please provide a concise but comprehensive summary of the following text.
 Return only plain text. Do not use Markdown, headings, bullet lists, numbered lists, bold text, tables, code blocks, or special formatting characters.
 Write the summary in short, clear paragraphs.
@@ -834,97 +812,132 @@ Text:
 {full_text}
 
 Plain text summary:"""
-    
-    # Call model for summarization
-    try:
-        if payload.use_gemini and payload.gemini_api_key:
-            import httpx
-            
-            # Fetch valid models dynamically
-            async with httpx.AsyncClient(timeout=10.0) as http_client:
-                models_resp = await http_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={payload.gemini_api_key}")
-                if models_resp.status_code != 200:
-                    raise Exception(f"Failed to list models: {models_resp.text}")
-                
-                models_data = models_resp.json().get("models", [])
-                valid_models = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
-                
-                if not valid_models:
-                    raise Exception("No generative models available for this API key.")
-                    
-                chosen_model = None
-                if payload.gemini_model and payload.gemini_model in valid_models:
-                    chosen_model = payload.gemini_model
-                if not chosen_model:
-                    chosen_model = valid_models[0]
-                    flash_models = [m for m in valid_models if "flash" in m]
-                    if flash_models:
-                        flash_models.sort(reverse=True)
-                        chosen_model = flash_models[0]
 
-            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:generateContent?key={payload.gemini_api_key}"
-            gemini_payload = {
-                "contents": [{"parts": [{"text": prompt}]}]
-            }
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                resp = await client.post(gemini_url, json=gemini_payload)
-            if resp.status_code != 200:
-                raise Exception(f"Gemini API error: {resp.text}")
-            result = resp.json()
-            summary = result["candidates"][0]["content"]["parts"][0]["text"].strip()
-        else:
-            response = requests.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={
-                    "model": payload.local_model if payload.local_model else GENERATION_MODEL,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=300  # Allow up to 5 minutes for summarization of large documents
-            )
-            
-            if response.status_code != 200:
-                raise Exception(f"Ollama error: {response.text}")
-            
-            result = response.json()
-            summary = result.get("response", "").strip()
+    if payload.use_gemini and payload.gemini_api_key:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
+            models_resp = await http_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={payload.gemini_api_key}")
+            if models_resp.status_code != 200:
+                raise Exception(f"Failed to list models: {models_resp.text}")
+            models_data = models_resp.json().get("models", [])
+            valid_models = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
+            if not valid_models:
+                raise Exception("No generative models available for this API key.")
+            chosen_model = None
+            if payload.gemini_model and payload.gemini_model in valid_models:
+                chosen_model = payload.gemini_model
+            if not chosen_model:
+                chosen_model = valid_models[0]
+                flash_models = [m for m in valid_models if "flash" in m]
+                if flash_models:
+                    flash_models.sort(reverse=True)
+                    chosen_model = flash_models[0]
 
-        summary = strip_markdown_formatting(summary)
-        
-        return {"summary": summary, "filename": filename}
-        
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=504, detail="Summarization timed out. Try with a shorter document.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}")
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:generateContent?key={payload.gemini_api_key}"
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(gemini_url, json={"contents": [{"parts": [{"text": prompt}]}]})
+        if resp.status_code != 200:
+            raise Exception(f"Gemini API error: {resp.text}")
+        result = resp.json()
+        summary = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+    else:
+        response = requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={"model": payload.local_model if payload.local_model else GENERATION_MODEL, "prompt": prompt, "stream": False},
+            timeout=300
+        )
+        if response.status_code != 200:
+            raise Exception(f"Ollama error: {response.text}")
+        summary = response.json().get("response", "").strip()
 
-class QuizRequest(BaseModel):
-    use_gemini: bool = False
-    gemini_api_key: Optional[str] = None
-    gemini_model: Optional[str] = None
-    local_model: Optional[str] = None
+    return strip_markdown_formatting(summary)
 
-@app.post("/api/quiz/{filename}")
-async def generate_quiz(filename: str, payload: QuizRequest):
-    import json
-    import re
-    
+
+@app.post("/api/summarize/{filename}")
+async def summarize_document(filename: str, payload: SummarizeRequest, authorization: Optional[str] = Header(None)):
     if not payload.use_gemini:
         try:
             check_and_pull_ollama_model()
         except Exception as e:
             raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
     
-    db_data = collection.get(
-        where={"source": filename},
-        include=["documents", "metadatas"]
-    )
-    
+    db_data = collection.get(where={"source": filename}, include=["documents", "metadatas"])
     if not db_data or not db_data["documents"]:
         raise HTTPException(status_code=404, detail="Document not found.")
     
     full_text = "\n".join(db_data["documents"])
     
+    try:
+        summary = await _run_summarize(full_text, payload)
+        return {"summary": summary, "filename": filename}
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Summarization timed out. Try with a shorter document.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}")
+
+
+# ─────────────────────────────────────────────
+# NEW: Summarize an entire course
+# ─────────────────────────────────────────────
+@app.post("/api/summarize-course/{course_id}")
+async def summarize_course(course_id: str, payload: SummarizeRequest, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    if not payload.use_gemini:
+        try:
+            check_and_pull_ollama_model()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
+
+    filenames = get_course_filenames(course_id, user)
+    if not filenames:
+        raise HTTPException(status_code=404, detail="No documents found for this course.")
+
+    db_data = get_chroma_docs_for_filenames(filenames)
+    if not db_data or not db_data["documents"]:
+        raise HTTPException(status_code=404, detail="No content found for this course.")
+
+    full_text = "\n\n".join(db_data["documents"])
+
+    # Fetch course title for labeling
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT title FROM courses WHERE id = ?", (course_id,))
+    course_row = cursor.fetchone()
+    conn.close()
+    course_title = course_row["title"] if course_row else course_id
+
+    try:
+        summary = await _run_summarize(full_text, payload)
+        return {
+            "summary": summary,
+            "course_id": course_id,
+            "course_title": course_title,
+            "filenames": filenames,
+        }
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Summarization timed out.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}")
+
+
+# ─────────────────────────────────────────────
+# QUIZ — single document (unchanged) + course variant
+# ─────────────────────────────────────────────
+class QuizRequest(BaseModel):
+    use_gemini: bool = False
+    gemini_api_key: Optional[str] = None
+    gemini_model: Optional[str] = None
+    local_model: Optional[str] = None
+
+
+async def _run_quiz(full_text: str, payload: QuizRequest) -> dict:
+    """Core quiz generation logic shared by single-doc and course endpoints."""
+    import json, re as _re
+
     prompt = f"""Ești Agentul B (Examinatorul). Generează un quiz format din fix 5 întrebări grilă unice baza pe textul de mai jos.
 Fiecare întrebare trebuie să aibă 4 variante de răspuns (A, B, C, D) și o singură variantă corectă.
 Trebuie să răspunzi STRICT cu un singur string JSON valid, care respectă următoarea structură:
@@ -950,65 +963,123 @@ Text:
 {full_text}
 """
 
-    try:
-        if payload.use_gemini and payload.gemini_api_key:
-            import httpx
-            async with httpx.AsyncClient(timeout=10.0) as http_client:
-                models_resp = await http_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={payload.gemini_api_key}")
-                if models_resp.status_code != 200:
-                    raise Exception(f"Failed to list models: {models_resp.text}")
-                
-                models_data = models_resp.json().get("models", [])
-                valid_models = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
-                if not valid_models:
-                    raise Exception("No generative models available for this API key.")
-                    
-                chosen_model = None
-                if payload.gemini_model and payload.gemini_model in valid_models:
-                    chosen_model = payload.gemini_model
-                if not chosen_model:
-                    chosen_model = valid_models[0]
-                    flash_models = [m for m in valid_models if "flash" in m]
-                    if flash_models:
-                        flash_models.sort(reverse=True)
-                        chosen_model = flash_models[0]
+    if payload.use_gemini and payload.gemini_api_key:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
+            models_resp = await http_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={payload.gemini_api_key}")
+            if models_resp.status_code != 200:
+                raise Exception(f"Failed to list models: {models_resp.text}")
+            models_data = models_resp.json().get("models", [])
+            valid_models = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
+            if not valid_models:
+                raise Exception("No generative models available for this API key.")
+            chosen_model = None
+            if payload.gemini_model and payload.gemini_model in valid_models:
+                chosen_model = payload.gemini_model
+            if not chosen_model:
+                chosen_model = valid_models[0]
+                flash_models = [m for m in valid_models if "flash" in m]
+                if flash_models:
+                    flash_models.sort(reverse=True)
+                    chosen_model = flash_models[0]
 
-            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:generateContent?key={payload.gemini_api_key}"
-            gemini_payload = {
-                "contents": [{"parts": [{"text": prompt}]}]
-            }
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(gemini_url, json=gemini_payload)
-            if resp.status_code != 200:
-                raise Exception(f"Gemini API error: {resp.text}")
-            result = resp.json()
-            quiz_text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
-        else:
-            response = requests.post(
-                f"{OLLAMA_URL}/api/generate",
-                json={
-                    "model": payload.local_model if payload.local_model else CHAT_MODEL,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=120
-            )
-            if response.status_code != 200:
-                raise Exception(f"Ollama error: {response.text}")
-            result = response.json()
-            quiz_text = result.get("response", "").strip()
-        
-        # Parse JSON
-        quiz_text = re.sub(r"```json\s*", "", quiz_text)
-        quiz_text = re.sub(r"```\s*", "", quiz_text)
-        quiz_data = json.loads(quiz_text.strip())
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:generateContent?key={payload.gemini_api_key}"
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(gemini_url, json={"contents": [{"parts": [{"text": prompt}]}]})
+        if resp.status_code != 200:
+            raise Exception(f"Gemini API error: {resp.text}")
+        result = resp.json()
+        quiz_text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+    else:
+        response = requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={"model": payload.local_model if payload.local_model else CHAT_MODEL, "prompt": prompt, "stream": False},
+            timeout=120
+        )
+        if response.status_code != 200:
+            raise Exception(f"Ollama error: {response.text}")
+        quiz_text = response.json().get("response", "").strip()
+
+    quiz_text = _re.sub(r"```json\s*", "", quiz_text)
+    quiz_text = _re.sub(r"```\s*", "", quiz_text)
+    return json.loads(quiz_text.strip())
+
+
+@app.post("/api/quiz/{filename}")
+async def generate_quiz(filename: str, payload: QuizRequest):
+    if not payload.use_gemini:
+        try:
+            check_and_pull_ollama_model()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
+    
+    db_data = collection.get(where={"source": filename}, include=["documents", "metadatas"])
+    if not db_data or not db_data["documents"]:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    
+    full_text = "\n".join(db_data["documents"])
+    
+    try:
+        quiz_data = await _run_quiz(full_text, payload)
         return {"quiz": quiz_data, "filename": filename}
-        
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Modelul nu a returnat un JSON valid pentru quiz. Mai încercați o dată.")
     except Exception as e:
+        import json
+        if isinstance(e, json.JSONDecodeError):
+            raise HTTPException(status_code=500, detail="Modelul nu a returnat un JSON valid pentru quiz. Mai încercați o dată.")
         raise HTTPException(status_code=500, detail=f"Eroare generare quiz: {str(e)}")
 
+
+# ─────────────────────────────────────────────
+# NEW: Quiz for an entire course
+# ─────────────────────────────────────────────
+@app.post("/api/quiz-course/{course_id}")
+async def generate_quiz_course(course_id: str, payload: QuizRequest, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    if not payload.use_gemini:
+        try:
+            check_and_pull_ollama_model()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
+
+    filenames = get_course_filenames(course_id, user)
+    if not filenames:
+        raise HTTPException(status_code=404, detail="No documents found for this course.")
+
+    db_data = get_chroma_docs_for_filenames(filenames)
+    if not db_data or not db_data["documents"]:
+        raise HTTPException(status_code=404, detail="No content found for this course.")
+
+    full_text = "\n\n".join(db_data["documents"])
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT title FROM courses WHERE id = ?", (course_id,))
+    course_row = cursor.fetchone()
+    conn.close()
+    course_title = course_row["title"] if course_row else course_id
+
+    try:
+        quiz_data = await _run_quiz(full_text, payload)
+        return {
+            "quiz": quiz_data,
+            "course_id": course_id,
+            "course_title": course_title,
+            "filenames": filenames,
+        }
+    except Exception as e:
+        import json
+        if isinstance(e, json.JSONDecodeError):
+            raise HTTPException(status_code=500, detail="Modelul nu a returnat un JSON valid pentru quiz. Mai încercați o dată.")
+        raise HTTPException(status_code=500, detail=f"Eroare generare quiz: {str(e)}")
+
+
+# ─────────────────────────────────────────────
+# CHAT — updated to support course_id
+# ─────────────────────────────────────────────
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -1023,43 +1094,54 @@ async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Head
         yield json.dumps({"type": "status", "content": "Caut informații relevante în documente..."}) + "\n"
         await asyncio.sleep(0.1)
         
-      
         if not request.use_gemini:
             try:
                 models_to_check = [EMBEDDING_MODEL, GENERATION_MODEL]
-
                 selected_model = request.local_model if request.local_model else CHAT_MODEL
                 models_to_check.append(selected_model)
-
                 response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
                 if response.status_code != 200:
                     raise Exception("Ollama responded with an error.")
-
                 installed_models = [m.get("name") for m in response.json().get("models", [])]
-
                 for model in models_to_check:
                     if not any(model in m for m in installed_models):
-                        yield json.dumps({
-                            "type": "status",
-                            "content": f"Se descarcă modelul {model}..."
-                        }) + "\n"
-
+                        yield json.dumps({"type": "status", "content": f"Se descarcă modelul {model}..."}) + "\n"
                         requests.post(f"{OLLAMA_URL}/api/pull", json={"name": model})
-
             except Exception as e:
-                yield json.dumps({
-                    "type": "status",
-                    "content": f"Serviciul Ollama indisponibil: {str(e)}"
-                }) + "\n"
+                yield json.dumps({"type": "status", "content": f"Serviciul Ollama indisponibil: {str(e)}"}) + "\n"
                 return
         
-        query_kwargs = {
-            "query_texts": [request.message],
-            "n_results": 5,
-            "include": ["documents", "metadatas"]
-        }
-        if request.filename:
-            query_kwargs["where"] = {"source": request.filename}
+        # ── Build ChromaDB query ──────────────────────────
+        # Priority: course_id > filename > all user docs
+        if request.course_id:
+            course_filenames = get_course_filenames(request.course_id, user)
+            if not course_filenames:
+                yield json.dumps({"type": "status", "content": "Nu am găsit documente pentru acest curs."}) + "\n"
+                yield json.dumps({"type": "text", "content": "Nu am găsit această informație în curs"}) + "\n"
+                return
+
+            query_kwargs = {
+                "query_texts": [request.message],
+                "n_results": min(10, len(course_filenames) * 3),
+                "include": ["documents", "metadatas"],
+            }
+            if len(course_filenames) == 1:
+                query_kwargs["where"] = {"source": course_filenames[0]}
+            else:
+                query_kwargs["where"] = {"source": {"$in": course_filenames}}
+        elif request.filename:
+            query_kwargs = {
+                "query_texts": [request.message],
+                "n_results": 5,
+                "include": ["documents", "metadatas"],
+                "where": {"source": request.filename},
+            }
+        else:
+            query_kwargs = {
+                "query_texts": [request.message],
+                "n_results": 5,
+                "include": ["documents", "metadatas"],
+            }
             
         query_results = collection.query(**query_kwargs)
         
@@ -1070,7 +1152,8 @@ async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Head
                 filtered_docs.append(doc)
                 filtered_metas.append(meta)
         
-        yield json.dumps({"type": "status", "content": f"Găsite {len(filtered_docs)} secțiuni relevante. Formulez răspunsul..."}) + "\n"
+        scope_label = "curs" if request.course_id else "document"
+        yield json.dumps({"type": "status", "content": f"Găsite {len(filtered_docs)} secțiuni relevante din {scope_label}. Formulez răspunsul..."}) + "\n"
         await asyncio.sleep(0.1)
         
         context = ""
@@ -1098,12 +1181,10 @@ Since no course context is available, you must answer exactly: "Nu am găsit ace
         try:
             if request.use_gemini and request.gemini_api_key:
                 import httpx
-                
                 async with httpx.AsyncClient(timeout=10.0) as http_client:
                     models_resp = await http_client.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={request.gemini_api_key}")
                     models_data = models_resp.json().get("models", [])
                     valid_models = [m["name"] for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
-
                     chosen_model = None
                     if request.gemini_model and request.gemini_model in valid_models:
                         chosen_model = request.gemini_model
@@ -1118,10 +1199,8 @@ Since no course context is available, you must answer exactly: "Nu am găsit ace
                 await asyncio.sleep(0.1)
 
                 gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:streamGenerateContent?alt=sse&key={request.gemini_api_key}"
-                gemini_payload = {"contents": [{"parts": [{"text": prompt}]}]}
-                
                 async with httpx.AsyncClient() as client:
-                    async with client.stream("POST", gemini_url, json=gemini_payload) as resp:
+                    async with client.stream("POST", gemini_url, json={"contents": [{"parts": [{"text": prompt}]}]}) as resp:
                         async for line in resp.aiter_lines():
                             if line.startswith("data: "):
                                 data_str = line[len("data: "):].strip()
@@ -1136,8 +1215,6 @@ Since no course context is available, you must answer exactly: "Nu am găsit ace
                                     pass
             else:
                 client = ollama.AsyncClient(host=OLLAMA_URL)
-
-                # 🔥 MODIFICARE AICI (model name)
                 yield json.dumps({
                     "type": "model_name",
                     "content": request.local_model if request.local_model else CHAT_MODEL
@@ -1154,21 +1231,20 @@ Since no course context is available, you must answer exactly: "Nu am găsit ace
                     full_response += chunk_text
                     yield json.dumps({"type": "text", "content": chunk_text}) + "\n"
 
-            # Save the history after successful generation
             if full_response.strip():
                 def _save_history():
                     try:
                         conn_h = sqlite3.connect("auth.db")
                         cur_h = conn_h.cursor()
+                        label = request.course_id or request.filename
                         cur_h.execute(
                             "INSERT INTO chat_history (id, user_id, filename, message, response, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                            (uuid.uuid4().hex, user["id"], request.filename, request.message, full_response, time.time())
+                            (uuid.uuid4().hex, user["id"], label, request.message, full_response, time.time())
                         )
                         conn_h.commit()
                         conn_h.close()
                     except Exception as he:
                         print("Failed to save chat history:", he)
-                # Quick fire-and-forget logic for saving
                 import threading
                 threading.Thread(target=_save_history).start()
 
