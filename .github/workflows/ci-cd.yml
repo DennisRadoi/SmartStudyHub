@@ -22,12 +22,12 @@ jobs:
       run: |
         cd backend
         python -m pip install --upgrade pip
-        pip install -r requirements.txt pytest flake8
+        pip install -r requirements.txt
 
     - name: Run backend tests
       run: |
         cd backend
-        python -m pytest --tb=short --cov=. || echo "No tests found, continuing..."
+        SMART_STUDY_HUB_SKIP_OLLAMA=1 python -m pytest --tb=short --cov=.
 
     - name: Lint backend code
       run: |
@@ -51,7 +51,7 @@ jobs:
     - name: Run frontend tests
       run: |
         cd frontend
-        npm test -- --watchAll=false --passWithNoTests || echo "No tests found, continuing..."
+        npm test
 
     - name: Build frontend
       run: |

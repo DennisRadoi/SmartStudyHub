@@ -154,7 +154,10 @@ def create_user(username: str, email: str, password: str, role: str = "student")
     conn.close()
     return {"id": user_id, "username": username, "email": email, "role": role}
 
-collection = get_db_collection()
+SKIP_OLLAMA_INIT = os.getenv("SMART_STUDY_HUB_SKIP_OLLAMA", "").lower() in {"1", "true", "yes"}
+collection = None
+if not SKIP_OLLAMA_INIT:
+    collection = get_db_collection()
 
 def init_auth_db():
     conn = get_db_connection()
