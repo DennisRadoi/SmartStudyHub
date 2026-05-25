@@ -235,6 +235,17 @@ function App() {
       ? getGeminiDisplayName(agentBSelection.model)
       : agentBSelection.model || "Agent B";
   const currentTheme = darkMode ? theme.dark : theme.light;
+  const preferredGeminiModel = "gemini-3.1-flash-lite";
+  const preferredOllamaAgentA = "gemma3n";
+  const preferredOllamaAgentB = "gemma3:4b";
+
+  const findPreferredOllamaModel = (preferred, list) => {
+    if (!preferred || !list.length) return null;
+    const exact = list.find((model) => model === preferred);
+    if (exact) return exact;
+    const withTag = list.find((model) => model.startsWith(`${preferred}:`));
+    return withTag || null;
+  };
 
   const fetchChatHistory = async () => {
     setLoadingHistory(true);
@@ -257,6 +268,12 @@ function App() {
   const getCourseTitle = (courseId) => {
     const c = courses.find((c) => c.id === courseId);
     return c ? c.title : courseId;
+  };
+
+  const getHistoryLabel = (label) => {
+    if (!label) return "General";
+    const course = courses.find((c) => c.id === label);
+    return course ? course.title : label;
   };
 
   useEffect(() => {
@@ -304,12 +321,22 @@ function App() {
 
   useEffect(() => {
     if (!ollamaModels.length) return;
-    setLocalModelAgentA((prev) =>
-      ollamaModels.includes(prev) ? prev : ollamaModels[0]
-    );
-    setLocalModelAgentB((prev) =>
-      ollamaModels.includes(prev) ? prev : ollamaModels[0]
-    );
+    setLocalModelAgentA((prev) => {
+      if (ollamaModels.includes(prev)) return prev;
+      const preferred = findPreferredOllamaModel(
+        preferredOllamaAgentA,
+        ollamaModels
+      );
+      return preferred || ollamaModels[0];
+    });
+    setLocalModelAgentB((prev) => {
+      if (ollamaModels.includes(prev)) return prev;
+      const preferred = findPreferredOllamaModel(
+        preferredOllamaAgentB,
+        ollamaModels
+      );
+      return preferred || ollamaModels[0];
+    });
   }, [ollamaModels]);
 
   useEffect(() => {
@@ -319,17 +346,46 @@ function App() {
       : [];
     const combinedOptions = [...ollamaOptions, ...geminiOptions];
     if (!combinedOptions.length) return;
+
+    const pickGeminiOption = () => {
+      const exact = geminiModels.find((model) => model === preferredGeminiModel);
+      if (exact) return `gemini:${exact}`;
+      const bySuffix = geminiModels.find((model) =>
+        model.endsWith(`/${preferredGeminiModel}`)
+      );
+      if (bySuffix) return `gemini:${bySuffix}`;
+      return geminiOptions[0] || null;
+    };
+    const pickOllamaOption = (preferred) => {
+      const match = findPreferredOllamaModel(preferred, ollamaModels);
+      if (match) return `ollama:${match}`;
+      return ollamaOptions[0] || null;
+    };
+
     setAgentAModelSelection((prev) => {
-      if (combinedOptions.includes(prev)) return prev;
-      if (useGemini && geminiOptions.length) return geminiOptions[0];
-      return ollamaOptions[0] || prev;
+      const shouldSwitchToGemini = useGemini && !prev.startsWith("gemini:");
+      const shouldSwitchToOllama = !useGemini && !prev.startsWith("ollama:");
+      if (combinedOptions.includes(prev) && !shouldSwitchToGemini && !shouldSwitchToOllama)
+        return prev;
+      if (useGemini) return pickGeminiOption() || prev;
+      return pickOllamaOption(preferredOllamaAgentA) || prev;
     });
     setAgentBModelSelection((prev) => {
-      if (combinedOptions.includes(prev)) return prev;
-      if (useGemini && geminiOptions.length) return geminiOptions[0];
-      return ollamaOptions[0] || prev;
+      const shouldSwitchToGemini = useGemini && !prev.startsWith("gemini:");
+      const shouldSwitchToOllama = !useGemini && !prev.startsWith("ollama:");
+      if (combinedOptions.includes(prev) && !shouldSwitchToGemini && !shouldSwitchToOllama)
+        return prev;
+      if (useGemini) return pickGeminiOption() || prev;
+      return pickOllamaOption(preferredOllamaAgentB) || prev;
     });
-  }, [ollamaModels, geminiModels, useGemini]);
+  }, [
+    ollamaModels,
+    geminiModels,
+    useGemini,
+    preferredGeminiModel,
+    preferredOllamaAgentA,
+    preferredOllamaAgentB,
+  ]);
 
   useEffect(() => {
     if (!useGemini || !geminiApiKey) {
@@ -1370,7 +1426,7 @@ function App() {
                         justifyContent: "space-between",
                       }}
                     >
-                      <strong>{item.filename || "General"}</strong>
+                      <strong>{getHistoryLabel(item.filename)}</strong>
                       <span style={{ fontSize: "0.75rem" }}>
                         {new Date(item.created_at * 1000).toLocaleDateString()}
                       </span>

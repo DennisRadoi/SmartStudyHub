@@ -278,6 +278,47 @@ def get_course_filenames(course_id: str, user: dict) -> list:
     return filenames
 
 
+def get_recent_chat_history(user_id: str, label: Optional[str], limit: int = 8) -> list:
+    """Return recent chat turns for a user and label (course_id or filename)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if label:
+        cursor.execute(
+            """
+            SELECT message, response FROM chat_history
+            WHERE user_id = ? AND filename = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (user_id, label, limit),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT message, response FROM chat_history
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        )
+    rows = cursor.fetchall()
+    conn.close()
+    return list(reversed(rows))
+
+
+def is_clarification_question(message: str) -> bool:
+    """Heuristic to detect follow-up/clarification questions."""
+    text = message.strip().lower()
+    if not text:
+        return False
+    if re.search(r"\b(clarify|clarification|explain|elaborate|what do you mean|could you expand|can you expand|why is that|how so)\b", text):
+        return True
+    if len(text) <= 80 and re.search(r"\b(this|that|it|they|those|these|he|she|him|her|them)\b", text):
+        return True
+    return False
+
+
 def get_chroma_docs_for_filenames(filenames: list) -> dict:
     """Fetch all ChromaDB documents for a list of filenames."""
     if not filenames:
@@ -1165,10 +1206,24 @@ async def chat_with_ai(request: ChatRequest, authorization: Optional[str] = Head
                 f"From {meta['source']} (page {meta['page']}): {doc}"
                 for doc, meta in zip(filtered_docs, filtered_metas)
             ])
-        
+
+        label = request.course_id or request.filename
+        history_rows = get_recent_chat_history(user["id"], label, limit=8)
+        history_block = "\n".join(
+            [f"User: {row['message']}\nAssistant: {row['response']}" for row in history_rows]
+        )
+        clarification = is_clarification_question(request.message)
+
         if context:
-            prompt = f"""You are an intelligent tutor. Answer the student's question using **ONLY** the information from the course context provided below.
-If the answer is NOT strictly contained in the context, you **MUST** reply with exactly: "Nu am găsit această informație în curs".
+            prompt = f"""You are an intelligent tutor.
+
+Rules:
+- Prefer course context for factual answers about the course.
+- If the user is asking for clarification or a follow-up about a prior answer, you may use the conversation history even if the course context does not mention it.
+- If the answer is not supported by either course context or conversation history, reply exactly: "Nu am găsit această informație în curs".
+
+Conversation History (most recent last):
+{history_block}
 
 Course Context:
 {context}
@@ -1177,7 +1232,22 @@ Student Question: {request.message}
 
 Answer:"""
         else:
-            prompt = """You are an intelligent tutor that answers ONLY using the course content.
+            if clarification and history_block:
+                prompt = f"""You are an intelligent tutor.
+
+Rules:
+- The user is asking for clarification or a follow-up about a prior answer.
+- Use the conversation history to answer.
+- If the answer is not supported by the conversation history, reply exactly: "Nu am găsit această informație în curs".
+
+Conversation History (most recent last):
+{history_block}
+
+Student Question: {request.message}
+
+Answer:"""
+            else:
+                prompt = """You are an intelligent tutor that answers ONLY using the course content.
 Since no course context is available, you must answer exactly: "Nu am găsit această informație în curs"."""
         
         full_response = ""
@@ -1237,9 +1307,8 @@ Since no course context is available, you must answer exactly: "Nu am găsit ace
             if full_response.strip():
                 def _save_history():
                     try:
-                        conn_h = sqlite3.connect("auth.db")
+                        conn_h = get_db_connection()
                         cur_h = conn_h.cursor()
-                        label = request.course_id or request.filename
                         cur_h.execute(
                             "INSERT INTO chat_history (id, user_id, filename, message, response, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                             (uuid.uuid4().hex, user["id"], label, request.message, full_response, time.time())
