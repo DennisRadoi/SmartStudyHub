@@ -68,6 +68,13 @@ def strip_markdown_formatting(text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
+def strip_feedback_formatting(text: str) -> str:
+    """Light cleanup to keep feedback readable without stripping bullets."""
+    text = re.sub(r"```(?:\w+)?\n?(.*?)```", r"\1", text, flags=re.DOTALL)
+    text = re.sub(r"[*_`~]+", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
 # Initialize Vector DB
 def get_db_connection():
     conn = sqlite3.connect("auth.db")
@@ -239,6 +246,23 @@ def init_auth_db():
         )
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quiz_question_attempts (
+            id TEXT PRIMARY KEY,
+            attempt_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            question TEXT NOT NULL,
+            correct_answer TEXT NOT NULL,
+            user_answer TEXT NOT NULL,
+            is_correct INTEGER NOT NULL,
+            explanation TEXT,
+            created_at REAL NOT NULL,
+            FOREIGN KEY(attempt_id) REFERENCES quiz_attempts(id)
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -357,6 +381,17 @@ class QuizAttemptRequest(BaseModel):
     filename: str
     score: int
     total_questions: int
+
+class QuizFeedbackRequest(BaseModel):
+    filename: str
+    score: int
+    total_questions: int
+    questions: list
+    answers: dict
+    use_gemini: bool = False
+    gemini_api_key: Optional[str] = None
+    gemini_model: Optional[str] = None
+    local_model: Optional[str] = None
 
 
 @asynccontextmanager
@@ -813,9 +848,14 @@ async def delete_document(filename: str, authorization: Optional[str] = Header(N
         if user["role"] == "developer":
             cursor.execute("DELETE FROM documents WHERE filename = ?", (filename,))
             cursor.execute("DELETE FROM quiz_attempts WHERE filename = ?", (filename,))
+            cursor.execute("DELETE FROM quiz_question_attempts WHERE filename = ?", (filename,))
         else:
             cursor.execute("DELETE FROM documents WHERE filename = ? AND owner_id = ?", (filename, user["id"]))
             cursor.execute("DELETE FROM quiz_attempts WHERE filename = ? AND user_id = ?", (filename, user["id"]))
+            cursor.execute(
+                "DELETE FROM quiz_question_attempts WHERE filename = ? AND user_id = ?",
+                (filename, user["id"]),
+            )
         conn.commit()
     else:
         owner_id = user["id"]
@@ -1049,6 +1089,59 @@ Text:
     return json.loads(quiz_text.strip())
 
 
+async def _run_quiz_feedback(prompt: str, payload: QuizFeedbackRequest) -> str:
+    if payload.use_gemini and payload.gemini_api_key:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
+            models_resp = await http_client.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={payload.gemini_api_key}"
+            )
+            if models_resp.status_code != 200:
+                raise Exception(f"Failed to list models: {models_resp.text}")
+            models_data = models_resp.json().get("models", [])
+            valid_models = [
+                m["name"]
+                for m in models_data
+                if "generateContent" in m.get("supportedGenerationMethods", [])
+            ]
+            if not valid_models:
+                raise Exception("No generative models available for this API key.")
+            chosen_model = None
+            if payload.gemini_model and payload.gemini_model in valid_models:
+                chosen_model = payload.gemini_model
+            if not chosen_model:
+                chosen_model = valid_models[0]
+                flash_models = [m for m in valid_models if "flash" in m]
+                if flash_models:
+                    flash_models.sort(reverse=True)
+                    chosen_model = flash_models[0]
+
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/{chosen_model}:generateContent?key={payload.gemini_api_key}"
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                gemini_url,
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+            )
+        if resp.status_code != 200:
+            raise Exception(f"Gemini API error: {resp.text}")
+        result = resp.json()
+        feedback = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+    else:
+        response = requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={
+                "model": payload.local_model if payload.local_model else CHAT_MODEL,
+                "prompt": prompt,
+                "stream": False,
+            },
+            timeout=120,
+        )
+        if response.status_code != 200:
+            raise Exception(f"Ollama error: {response.text}")
+        feedback = response.json().get("response", "").strip()
+    return strip_feedback_formatting(feedback)
+
+
 @app.post("/api/quiz/{filename}")
 async def generate_quiz(filename: str, payload: QuizRequest):
     if not payload.use_gemini:
@@ -1071,6 +1164,212 @@ async def generate_quiz(filename: str, payload: QuizRequest):
         if isinstance(e, json.JSONDecodeError):
             raise HTTPException(status_code=500, detail="Modelul nu a returnat un JSON valid pentru quiz. Mai încercați o dată.")
         raise HTTPException(status_code=500, detail=f"Eroare generare quiz: {str(e)}")
+
+
+@app.post("/api/quiz-feedback")
+async def generate_quiz_feedback(payload: QuizFeedbackRequest, authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = get_user_by_token(token)
+
+    if not payload.use_gemini:
+        try:
+            check_and_pull_ollama_model()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
+
+    if payload.total_questions <= 0:
+        raise HTTPException(status_code=400, detail="Quiz must include at least one question.")
+    if payload.score < 0 or payload.score > payload.total_questions:
+        raise HTTPException(status_code=400, detail="Invalid quiz score.")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if user["role"] == "developer":
+        cursor.execute("SELECT 1 FROM documents WHERE filename = ? LIMIT 1", (payload.filename,))
+    else:
+        cursor.execute(
+            "SELECT 1 FROM documents WHERE filename = ? AND owner_id = ? LIMIT 1",
+            (payload.filename, user["id"]),
+        )
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    attempt_id = uuid.uuid4().hex
+    created_at = time.time()
+    cursor.execute(
+        "INSERT INTO quiz_attempts (id, user_id, filename, score, total_questions, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            attempt_id,
+            user["id"],
+            payload.filename,
+            payload.score,
+            payload.total_questions,
+            created_at,
+        ),
+    )
+
+    for index, question in enumerate(payload.questions or []):
+        user_answer = str(payload.answers.get(str(index), payload.answers.get(index, "")))
+        correct_answer = str(question.get("correct_answer", ""))
+        cursor.execute(
+            """
+            INSERT INTO quiz_question_attempts
+            (id, attempt_id, user_id, filename, question, correct_answer, user_answer, is_correct, explanation, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                uuid.uuid4().hex,
+                attempt_id,
+                user["id"],
+                payload.filename,
+                question.get("question", ""),
+                correct_answer,
+                user_answer,
+                1 if user_answer == correct_answer else 0,
+                question.get("explanation", ""),
+                created_at,
+            ),
+        )
+
+    cursor.execute(
+        """
+        SELECT d.course_id, c.title
+        FROM documents d
+        LEFT JOIN courses c ON d.course_id = c.id
+        WHERE d.filename = ?
+        LIMIT 1
+        """,
+        (payload.filename,),
+    )
+    course_row = cursor.fetchone()
+    course_id = course_row["course_id"] if course_row else None
+    course_title = course_row["title"] if course_row and course_row["title"] else None
+
+    course_filenames = [payload.filename]
+    if course_id:
+        course_filenames = get_course_filenames(course_id, user) or course_filenames
+
+    if len(course_filenames) == 1:
+        cursor.execute(
+            """
+            SELECT score, total_questions, created_at
+            FROM quiz_attempts
+            WHERE user_id = ? AND filename = ? AND id != ?
+            ORDER BY created_at DESC
+            LIMIT 5
+            """,
+            (user["id"], course_filenames[0], attempt_id),
+        )
+        previous_scores = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute(
+            """
+            SELECT filename, question, correct_answer, user_answer, is_correct, explanation, created_at
+            FROM quiz_question_attempts
+            WHERE user_id = ? AND filename = ? AND attempt_id != ?
+            ORDER BY created_at DESC
+            LIMIT 20
+            """,
+            (user["id"], course_filenames[0], attempt_id),
+        )
+        previous_questions = [dict(row) for row in cursor.fetchall()]
+    else:
+        placeholders = ",".join(["?"] * len(course_filenames))
+        cursor.execute(
+            f"""
+            SELECT score, total_questions, created_at
+            FROM quiz_attempts
+            WHERE user_id = ? AND filename IN ({placeholders}) AND id != ?
+            ORDER BY created_at DESC
+            LIMIT 5
+            """,
+            (user["id"], *course_filenames, attempt_id),
+        )
+        previous_scores = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute(
+            f"""
+            SELECT filename, question, correct_answer, user_answer, is_correct, explanation, created_at
+            FROM quiz_question_attempts
+            WHERE user_id = ? AND filename IN ({placeholders}) AND attempt_id != ?
+            ORDER BY created_at DESC
+            LIMIT 20
+            """,
+            (user["id"], *course_filenames, attempt_id),
+        )
+        previous_questions = [dict(row) for row in cursor.fetchall()]
+
+    conn.commit()
+    conn.close()
+
+    correct_now = []
+    incorrect_now = []
+    for index, question in enumerate(payload.questions or []):
+        user_answer = str(payload.answers.get(str(index), payload.answers.get(index, "")))
+        correct_answer = str(question.get("correct_answer", ""))
+        record = {
+            "document": payload.filename,
+            "question": question.get("question", ""),
+            "correct_answer": correct_answer,
+            "user_answer": user_answer,
+            "explanation": question.get("explanation", ""),
+        }
+        if user_answer == correct_answer:
+            correct_now.append(record)
+        else:
+            incorrect_now.append(record)
+
+    previous_incorrect = [q for q in previous_questions if not q.get("is_correct")]
+    previous_correct = [q for q in previous_questions if q.get("is_correct")]
+
+    previous_score_text = "".join(
+        f"- {row['score']}/{row['total_questions']} ({round((row['score'] * 100.0) / row['total_questions'], 1)}%)\n"
+        for row in previous_scores
+        if row.get("total_questions")
+    )
+    prompt = f"""Ești Agentul A (Tutor). Oferă feedback personalizat pentru quiz.
+Scrie exclusiv în limba română.
+Format obligatoriu, text clar, fără Markdown:
+Puncte tari:
+- ...
+De îmbunătățit:
+- ...
+
+Cerințe:
+- Corelează rezultatele curente cu istoricul pe aceeași materie.
+- Folosește cunoștințe de domeniu pentru a detecta tipare și pentru a explica legăturile conceptuale.
+- La fiecare punct din „De îmbunătățit”, menționează documentul sursă.
+- Include unde găsește informația: cursul este {course_title or course_id or 'Nespecificat'}.
+- Fii concis (maxim 6 puncte în total).
+
+Materie (curs): {course_title or course_id or 'Nespecificat'}
+Document curent: {payload.filename}
+Scor curent: {payload.score}/{payload.total_questions}
+
+Rezultate curente corecte:
+{correct_now}
+
+Rezultate curente greșite:
+{incorrect_now}
+
+Istoric scoruri (ultimele):
+{previous_score_text or 'Nu există încercări anterioare.'}
+
+Întrebări anterioare greșite (most recent):
+{previous_incorrect or 'Niciuna.'}
+
+Întrebări anterioare corecte (most recent):
+{previous_correct or 'Niciuna.'}
+"""
+
+    try:
+        feedback = await _run_quiz_feedback(prompt, payload)
+        return {"feedback": feedback, "attempt_id": attempt_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Eroare feedback quiz: {str(e)}")
 
 
 # ─────────────────────────────────────────────

@@ -143,6 +143,9 @@ function App() {
   const [quizAnswers, setQuizAnswers] = useState({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizLabel, setQuizLabel] = useState("");
+  const [quizFeedback, setQuizFeedback] = useState("");
+  const [quizFeedbackLoading, setQuizFeedbackLoading] = useState(false);
+  const [quizFeedbackError, setQuizFeedbackError] = useState("");
 
   // Q&A section
   const [qaScopeMode, setQAScopeMode] = useState("document");
@@ -1029,6 +1032,9 @@ function App() {
     setQuizData(null);
     setQuizAnswers({});
     setQuizSubmitted(false);
+    setQuizFeedback("");
+    setQuizFeedbackLoading(false);
+    setQuizFeedbackError("");
     setQuizGenerating(true);
     setMessage("");
 
@@ -1087,25 +1093,52 @@ function App() {
     const score = calculateQuizScore();
     setQuizSubmitted(true);
 
-    // Save attempt only if we have a single doc reference (course quizzes save by course label)
-    if (selectedDoc) {
-      try {
-        const response = await fetch(`${API_BASE}/quiz-attempts`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            filename: selectedDoc,
-            score,
-            total_questions: quizData.questions.length,
-          }),
-        });
-        if (response.ok) await fetchDashboard();
-      } catch (error) {
-        console.error("Failed to save quiz attempt", error);
+    if (!selectedDoc) {
+      setQuizFeedbackError(
+        "Feedback-ul AI este disponibil doar pentru quiz-uri pe document."
+      );
+      return;
+    }
+
+    setQuizFeedback("");
+    setQuizFeedbackError("");
+    setQuizFeedbackLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/quiz-feedback`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          filename: selectedDoc,
+          score,
+          total_questions: quizData.questions.length,
+          questions: quizData.questions,
+          answers: quizAnswers,
+          use_gemini: agentASelection.source === "gemini",
+          gemini_api_key: geminiApiKey,
+          local_model:
+            agentASelection.source === "ollama" ? agentASelection.model : null,
+          gemini_model:
+            agentASelection.source === "gemini" ? agentASelection.model : null,
+        }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setQuizFeedback(data.feedback || "");
+        await fetchDashboard();
+      } else {
+        setQuizFeedbackError(
+          data.detail || "Nu am putut genera feedback-ul."
+        );
       }
+    } catch (error) {
+      setQuizFeedbackError(
+        "Eroare la generarea feedback-ului: " + error.message
+      );
+    } finally {
+      setQuizFeedbackLoading(false);
     }
   };
 
@@ -3120,6 +3153,44 @@ function App() {
                               Scor Final: {calculateQuizScore()} /{" "}
                               {quizData.questions.length}
                             </h3>
+                            {quizFeedbackLoading && (
+                              <div
+                                style={{
+                                  marginTop: "14px",
+                                  color: currentTheme.textSecondary,
+                                }}
+                              >
+                                Generez feedback-ul personalizat...
+                              </div>
+                            )}
+                            {quizFeedbackError && (
+                              <div
+                                style={{
+                                  marginTop: "14px",
+                                  color: currentTheme.error,
+                                }}
+                              >
+                                {quizFeedbackError}
+                              </div>
+                            )}
+                            {quizFeedback && (
+                              <div
+                                style={{
+                                  marginTop: "14px",
+                                  padding: "14px 16px",
+                                  borderRadius: "10px",
+                                  backgroundColor: currentTheme.surface,
+                                  border: `1px solid ${currentTheme.border}`,
+                                  whiteSpace: "pre-line",
+                                  textAlign: "left",
+                                }}
+                              >
+                                <strong>Feedback pe baza tuturor PDF-urilor din curs</strong>
+                                <div style={{ marginTop: "8px" }}>
+                                  {quizFeedback}
+                                </div>
+                              </div>
+                            )}
                             <button
                               onClick={() =>
                                 quizScopeMode === "course"
