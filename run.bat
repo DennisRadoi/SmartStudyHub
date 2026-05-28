@@ -17,8 +17,8 @@ set "PYTHON_EXE="
 
 if exist "venv\Scripts\python.exe" (
     set "PYTHON_EXE=%CD%\venv\Scripts\python.exe"
-) else if exist "%LocalAppData%\Programs\Python\Python312\python.exe" (
-    set "PYTHON_EXE=%LocalAppData%\Programs\Python\Python312\python.exe"
+) else if exist "%LocalAppData%\Programs\Python\Python311\python.exe" (
+    set "PYTHON_EXE=%LocalAppData%\Programs\Python\Python311\python.exe"
 ) else if exist "C:\msys64\ucrt64\bin\python.exe" (
     set "PYTHON_EXE=C:\msys64\ucrt64\bin\python.exe"
 ) else (
@@ -72,10 +72,36 @@ if errorlevel 1 (
     )
 )
 
+set "NPM_CMD="
+for /f "delims=" %%N in ('where npm.cmd 2^>nul') do (
+    echo %%N | findstr /i "\\node_modules\\" >nul
+    if errorlevel 1 (
+        set "NPM_CMD=%%N"
+        goto npm_found
+    )
+)
+:npm_found
+if not defined NPM_CMD (
+    for /f "delims=" %%N in ('where npm 2^>nul') do (
+        echo %%N | findstr /i "\\node_modules\\" >nul
+        if errorlevel 1 (
+            set "NPM_CMD=%%N"
+            goto npm_found2
+        )
+    )
+)
+:npm_found2
+
+if not defined NPM_CMD (
+    echo ERROR: npm was not found. Install Node.js LTS and reopen your terminal.
+    pause
+    exit /b 1
+)
+
 if not exist "frontend\node_modules" (
     echo [setup] Installing frontend dependencies...
     pushd frontend
-    call npm.cmd install
+    call "%NPM_CMD%" install
     if errorlevel 1 (
         popd
         echo ERROR: Could not install frontend dependencies.
@@ -90,7 +116,7 @@ start "Smart Study Hub - Backend" cmd /k call "%PYTHON_EXE%" -m uvicorn backend.
 
 echo [2/2] Starting React frontend in a new window...
 pushd frontend
-start "Smart Study Hub - Frontend" cmd /k "npm.cmd run dev -- --host 127.0.0.1"
+start "Smart Study Hub - Frontend" cmd /k ""%NPM_CMD%" run dev -- --host 127.0.0.1"
 popd
 
 echo.
