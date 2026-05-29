@@ -35,7 +35,7 @@ os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(DB_DIR, exist_ok=True)
 
 def check_and_pull_ollama_model():
-    """Verify Ollama is running and download the model if needed."""
+    """Verify Ollama is running and download the embedding model if needed."""
     try:
         response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         if response.status_code != 200:
@@ -44,7 +44,7 @@ def check_and_pull_ollama_model():
         models_data = response.json().get("models", [])
         installed_models = [m.get("name") for m in models_data]
         
-        for model in [EMBEDDING_MODEL, GENERATION_MODEL, CHAT_MODEL]:
+        for model in [EMBEDDING_MODEL]:
             if not any(model in m for m in installed_models):
                 print(f"Downloading model {model} (this may take a minute)...")
                 pull_response = requests.post(f"{OLLAMA_URL}/api/pull", json={"name": model}, stream=False)

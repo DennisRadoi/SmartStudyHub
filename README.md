@@ -86,6 +86,8 @@ If you prefer to start them manually, you will need two separate terminals:
 - [Node.js](https://nodejs.org/) installed.
 - [Python 3.9+](https://www.python.org/)
 - [Ollama](https://ollama.ai/) installed and running locally.
+- The backend will auto-pull `nomic-embed-text` when needed for PDF upload and indexing.
+- `gemma3b` and `gemma3:4b` are only needed for local generation features and can be pulled manually if you want to use them.
 
 ### 1. Start the FastAPI Backend
 Open a terminal and run the following commands:
@@ -116,7 +118,7 @@ npm run dev
 ## 🛠️ Built With
 - **Frontend**: Node.js, React, Vite.
 - **Backend**: Python, FastAPI, PyPDF.
-- **AI Models**: Ollama (Mistral, Qwen 2.5, nomic-embed-text) & Google Gemini REST API.
+- **AI Models**: Ollama (`nomic-embed-text` is auto-managed for uploads; `gemma3n` and `gemma3:4b` are optional/manual) & Google Gemini REST API.
 - **Local Vector DB**: ChromaDB
 
 ## 🧪 Model Recommendations
