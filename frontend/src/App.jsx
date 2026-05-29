@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import PDFViewer from "./PDFViewer";
 
 const API_BASE = "http://localhost:8000/api";
@@ -241,6 +241,10 @@ function App() {
   const preferredGeminiModel = "gemini-3.1-flash-lite";
   const preferredOllamaAgentA = "gemma3n";
   const preferredOllamaAgentB = "gemma3:4b";
+  const selectableOllamaModels = useMemo(
+    () => ollamaModels.filter((model) => !model.startsWith("nomic-embed-text")),
+    [ollamaModels]
+  );
 
   const findPreferredOllamaModel = (preferred, list) => {
     if (!preferred || !list.length) return null;
@@ -323,27 +327,29 @@ function App() {
   }, [token]);
 
   useEffect(() => {
-    if (!ollamaModels.length) return;
+    if (!selectableOllamaModels.length) return;
     setLocalModelAgentA((prev) => {
-      if (ollamaModels.includes(prev)) return prev;
+      if (selectableOllamaModels.includes(prev)) return prev;
       const preferred = findPreferredOllamaModel(
         preferredOllamaAgentA,
-        ollamaModels
+        selectableOllamaModels
       );
-      return preferred || ollamaModels[0];
+      return preferred || selectableOllamaModels[0];
     });
     setLocalModelAgentB((prev) => {
-      if (ollamaModels.includes(prev)) return prev;
+      if (selectableOllamaModels.includes(prev)) return prev;
       const preferred = findPreferredOllamaModel(
         preferredOllamaAgentB,
-        ollamaModels
+        selectableOllamaModels
       );
-      return preferred || ollamaModels[0];
+      return preferred || selectableOllamaModels[0];
     });
-  }, [ollamaModels]);
+  }, [selectableOllamaModels]);
 
   useEffect(() => {
-    const ollamaOptions = ollamaModels.map((model) => `ollama:${model}`);
+    const ollamaOptions = selectableOllamaModels.map(
+      (model) => `ollama:${model}`
+    );
     const geminiOptions = useGemini
       ? geminiModels.map((model) => `gemini:${model}`)
       : [];
@@ -360,7 +366,7 @@ function App() {
       return geminiOptions[0] || null;
     };
     const pickOllamaOption = (preferred) => {
-      const match = findPreferredOllamaModel(preferred, ollamaModels);
+      const match = findPreferredOllamaModel(preferred, selectableOllamaModels);
       if (match) return `ollama:${match}`;
       return ollamaOptions[0] || null;
     };
@@ -1903,7 +1909,7 @@ function App() {
                           width: "100%",
                         }}
                       >
-                        {ollamaModels.map((model) => (
+                        {selectableOllamaModels.map((model) => (
                           <option
                             key={`ollama:${model}`}
                             value={`ollama:${model}`}
